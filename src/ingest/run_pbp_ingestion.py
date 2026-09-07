@@ -40,6 +40,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pbp_ingestion")
 
+# bronze.plays_raw's INTEGER columns (everything else numeric there is
+# DOUBLE PRECISION). pandas upcasts an int column containing any missing
+# value to float64/NaN, and Postgres rejects NaN into an INTEGER column
+# while SQLite silently coerces it to NULL -- so this only fails in
+# production. Same failure mode the Slice A review fixed via _int_or_none()
+# in gold_transform.py and plays_transform.py; this bulk to_sql path was
+# added afterwards and missed it. Real 2025 data has no nulls in these
+# columns today, so this is insurance against the class recurring, not a
+# fix for an active failure.
+_INT_COLUMNS = ("season", "week", "qtr")
+
 
 def _replace_plays(df: pd.DataFrame, source: str, run_id: int, season: int) -> int:
     if df.empty:
@@ -49,6 +60,14 @@ def _replace_plays(df: pd.DataFrame, source: str, run_id: int, season: int) -> i
     df = df.copy()
     df["source"] = source
     df["pipeline_run_id"] = run_id
+
+    for col in _INT_COLUMNS:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda v: None if pd.isna(v) else int(v))
+    # Belt-and-suspenders, matching plays_transform._transform(): any other
+    # NaN becomes a real SQL NULL rather than a float NaN that round-trips
+    # as a NaN value and breaks `WHERE col IS NULL` downstream.
+    df = df.where(pd.notna(df), None)
 
     with engine.begin() as conn:
         conn.execute(
