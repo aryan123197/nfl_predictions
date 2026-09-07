@@ -21,6 +21,7 @@ from typing import Iterator
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 DEFAULT_SQLITE_URL = "sqlite:///./nfl_predict.db"
@@ -104,8 +105,21 @@ def apply_ddl_file(filename: str) -> None:
     with engine.begin() as conn:
         for statement in sql.split(";"):
             statement = statement.strip()
-            if statement:
+            if not statement:
+                continue
+            try:
                 conn.execute(text(statement))
+            except OperationalError as exc:
+                # SQLite's ALTER TABLE ADD COLUMN has no IF NOT EXISTS
+                # clause (Postgres does) -- _translate_ddl_for_sqlite
+                # strips it, so re-running an already-applied ADD COLUMN
+                # against SQLite hits "duplicate column name" instead of
+                # silently no-op'ing like it does on Postgres. Swallow
+                # exactly that, to keep re-running init_schema() idempotent
+                # on both dialects.
+                if engine.dialect.name == "sqlite" and "duplicate column name" in str(exc).lower():
+                    continue
+                raise
 
 
 def _translate_ddl_for_sqlite(sql: str) -> str:
@@ -129,4 +143,9 @@ def _translate_ddl_for_sqlite(sql: str) -> str:
     out = out.replace("DATE", "TEXT")
     out = out.replace("now()", "CURRENT_TIMESTAMP")
     out = out.replace("DOUBLE PRECISION", "REAL")
+    # SQLite's ALTER TABLE ADD COLUMN has no IF NOT EXISTS clause (unlike
+    # Postgres) -- stripped here, idempotency on rerun is instead handled
+    # in apply_ddl_file() by swallowing the resulting "duplicate column
+    # name" error.
+    out = out.replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN")
     return out

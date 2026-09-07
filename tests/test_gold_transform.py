@@ -88,6 +88,14 @@ def kc_qb_roster():
                           "team": ["KC"], "status": ["ACT"]})
 
 
+@pytest.fixture()
+def tie_then_game():
+    return pd.DataFrame([
+        _base_game("2025_01_KC_LAC", 1, "KC", "LAC", home_score=20.0, away_score=20.0, gameday="2025-09-07"),
+        _base_game("2025_02_KC_DEN", 2, "DEN", "KC", gameday="2025-09-14"),
+    ])
+
+
 def _run_full_pipeline(games, injuries=None, players=None):
     provider = FakeProvider(games=games, injuries=injuries, players=players)
     run_ingestion.run(provider, season=2025, week=None,
@@ -204,3 +212,73 @@ def test_rest_days_carried_from_silver_games(isolated_db, two_week_games):
 
     assert row[0] == 7
     assert row[1] == 7
+
+
+def test_tie_counts_as_half_win_in_recent_form(isolated_db, tie_then_game):
+    # Regression test: a tie used to be recorded as win=False for BOTH
+    # teams (home_margin > 0 is False when margin is 0), so recent_form
+    # scored a tied game as an outright loss. Elo already treats a tie as
+    # 0.5 (see elo.py's _actual_score) -- recent_form should match.
+    _run_full_pipeline(tie_then_game)
+
+    engine = db_module.get_engine()
+    with engine.connect() as conn:
+        tie_win_flag = conn.execute(
+            text("SELECT win FROM gold_team_game_stats WHERE team_id = 'KC' AND game_id = '2025_01_KC_LAC'")
+        ).scalar()
+        week2_away_form = conn.execute(
+            text("SELECT away_recent_form FROM gold_game_features WHERE game_id = '2025_02_KC_DEN'")
+        ).scalar()
+
+    assert tie_win_flag is None  # neither a win nor a loss
+    assert week2_away_form == 0.5  # the tie counts as half a win, not a full loss
+
+
+def test_scheduled_games_do_not_crash_the_pipeline_on_missing_scores(isolated_db, two_week_games):
+    # Regression test: pd.read_sql upcasts a NULL INTEGER column to float
+    # NaN, and inserting that NaN straight into an INTEGER column fails on
+    # Postgres (SQLite silently coerces it to NULL, which is why this only
+    # showed up against a real Postgres-shaped check). two_week_games
+    # already includes one scheduled (unplayed) game -- this just asserts
+    # the pipeline completes and leaves clean NULLs, not NaNs, behind.
+    _run_full_pipeline(two_week_games)
+
+    engine = db_module.get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT points_for, points_against FROM gold_team_game_stats "
+                 "WHERE game_id = '2025_02_KC_DEN' AND team_id = 'KC'")
+        ).fetchone()
+
+    assert row[0] is None
+    assert row[1] is None
+
+
+def test_schema_migration_backfills_columns_on_a_pre_existing_database(isolated_db):
+    # Regression test: home_rest_days/away_rest_days/season/week were
+    # added to silver.games/silver.injuries by editing the CREATE TABLE IF
+    # NOT EXISTS statements in place. On a database that already ran the
+    # OLD schema, that's a silent no-op -- the columns never get added.
+    # Simulate that by creating the tables with the old (pre-migration)
+    # shape directly, then confirm init_schema() backfills the columns.
+    engine = db_module.get_engine()
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE silver_games (game_id TEXT PRIMARY KEY, season INTEGER NOT NULL, week INTEGER, "
+            "game_date TEXT, home_team_id TEXT NOT NULL, away_team_id TEXT NOT NULL, home_score INTEGER, "
+            "away_score INTEGER, venue_id TEXT, status TEXT NOT NULL)"
+        ))
+        conn.execute(text(
+            "CREATE TABLE silver_injuries (injury_id INTEGER PRIMARY KEY, bronze_id INTEGER NOT NULL, "
+            "player_id TEXT, team_id TEXT, status TEXT, injury_type TEXT, reported_at TEXT, "
+            "expected_return TEXT, source TEXT NOT NULL)"
+        ))
+
+    db_module.init_schema()  # must not raise, and must add the missing columns
+
+    with engine.connect() as conn:
+        games_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(silver_games)"))}
+        injuries_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(silver_injuries)"))}
+
+    assert {"home_rest_days", "away_rest_days"} <= games_cols
+    assert {"season", "week"} <= injuries_cols

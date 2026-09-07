@@ -50,6 +50,14 @@ CREATE TABLE IF NOT EXISTS silver.games (
 CREATE INDEX IF NOT EXISTS idx_silver_games_season_week
     ON silver.games (season, week);
 
+-- home_rest_days/away_rest_days were added after this table may already
+-- exist in a previously-initialized database -- CREATE TABLE IF NOT
+-- EXISTS above is a no-op there, so these columns are backfilled
+-- explicitly. Safe to always run: a no-op once the column exists,
+-- whether from a fresh CREATE TABLE or a prior run of this same ALTER.
+ALTER TABLE silver.games ADD COLUMN IF NOT EXISTS home_rest_days INTEGER;
+ALTER TABLE silver.games ADD COLUMN IF NOT EXISTS away_rest_days INTEGER;
+
 -- ---------------------------------------------------------------------
 -- silver.players
 -- ---------------------------------------------------------------------
@@ -91,6 +99,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_injuries_bronze_id
     ON silver.injuries (bronze_id);
 CREATE INDEX IF NOT EXISTS idx_silver_injuries_player
     ON silver.injuries (player_id);
+
+-- season/week were added after this table may already exist -- see the
+-- same note on silver.games above.
+ALTER TABLE silver.injuries ADD COLUMN IF NOT EXISTS season INTEGER;
+ALTER TABLE silver.injuries ADD COLUMN IF NOT EXISTS week INTEGER;
 
 -- ---------------------------------------------------------------------
 -- silver.odds

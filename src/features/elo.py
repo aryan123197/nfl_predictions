@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.features.game_status import is_final_game
+
 INITIAL_RATING = 1500.0
 K_FACTOR = 20.0
 HOME_ADVANTAGE = 55.0  # elo points added to the home team's rating before computing expected score
@@ -87,7 +89,7 @@ def compute_elo_ratings(games: pd.DataFrame) -> pd.DataFrame:
             home_id, away_id = row["home_team_id"], row["away_team_id"]
             home_pre, away_pre = week_pre[game_id]
 
-            if row.get("status") == "final" and pd.notna(row.get("home_score")) and pd.notna(row.get("away_score")):
+            if is_final_game(row):
                 expected_home = _expected_score(home_pre + HOME_ADVANTAGE, away_pre)
                 actual_home = _actual_score(row["home_score"], row["away_score"])
                 delta = K_FACTOR * (actual_home - expected_home)

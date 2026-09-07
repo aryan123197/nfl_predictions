@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.features.injury_impact import compute_team_injury_impact, load_weights
+from src.features.injury_impact import _latest_report_per_player, compute_team_injury_impact, load_weights
 
 
 @pytest.fixture()
@@ -85,3 +85,26 @@ def test_empty_injuries_returns_empty_dict(weights, players):
     impact = compute_team_injury_impact(pd.DataFrame(columns=["player_id", "team_id", "status", "reported_at"]),
                                          players, weights=weights)
     assert impact == {}
+
+
+def test_latest_report_does_not_mix_fields_across_reports_with_missing_timestamp():
+    # Regression test: groupby(...).last() picks the last *non-null value
+    # per column independently*, not the last row as a whole. With one
+    # timestamped report and one un-timestamped (NaT) report for the same
+    # player, the old implementation could return status="Out" (the row
+    # that's actually NaT) paired with reported_at="2025-09-03" (borrowed
+    # from the OTHER, Doubtful row) -- a combination that never existed in
+    # the source data. Real for 2025 nflverse data (see DECISIONS.md #5),
+    # which frequently has no reported_at at all.
+    injuries = pd.DataFrame({
+        "player_id": ["qb1", "qb1"],
+        "team_id": ["KC", "KC"],
+        "status": ["Doubtful", "Out"],
+        "reported_at": ["2025-09-03", None],
+    })
+    latest = _latest_report_per_player(injuries)
+    row = latest[latest["player_id"] == "qb1"].iloc[0]
+
+    # the chosen row must be exactly one of the two real reports -- never
+    # a status/timestamp pairing that never actually existed
+    assert (row["status"], pd.isna(row["reported_at"])) in [("Doubtful", False), ("Out", True)]

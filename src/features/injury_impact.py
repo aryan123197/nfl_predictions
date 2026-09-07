@@ -38,13 +38,27 @@ def _latest_report_per_player(injuries: pd.DataFrame) -> pd.DataFrame:
     recent report per player as of that cutoff -- not every report ever
     filed. Callers are responsible for pre-filtering to rows with
     reported_at < cutoff before calling this.
+
+    Uses sort + groupby(...).tail(1) rather than groupby(...).last() --
+    .last() picks the last *non-null value per column independently*, not
+    the last row as a whole. With a mix of timestamped and un-timestamped
+    reports for the same player (real for 2025 nflverse data -- see
+    DECISIONS.md #5), that silently stitched together a status from one
+    report with a reported_at from a different one. tail(1) always
+    returns one complete, real row.
     """
     if injuries.empty:
         return injuries
     sortable = injuries.copy()
     sortable["reported_at"] = pd.to_datetime(sortable["reported_at"], errors="coerce")
-    sortable = sortable.sort_values("reported_at")
-    return sortable.groupby("player_id", as_index=False).last()
+    # Sort by (season, week) first when available -- always present for
+    # real data and a more reliable ordering than a possibly-missing
+    # timestamp -- then by reported_at as a same-week tiebreaker.
+    sort_keys = ["player_id"]
+    sort_keys += [k for k in ("season", "week") if k in sortable.columns]
+    sort_keys.append("reported_at")
+    sortable = sortable.sort_values(sort_keys)
+    return sortable.groupby("player_id", as_index=False).tail(1)
 
 
 def compute_team_injury_impact(injuries_as_of_cutoff: pd.DataFrame, positions: pd.DataFrame,

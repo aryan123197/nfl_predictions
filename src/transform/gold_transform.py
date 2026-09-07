@@ -42,6 +42,7 @@ from sqlalchemy.engine import Engine
 
 from src.db import get_engine, init_schema, qualified_table
 from src.features.elo import compute_elo_ratings
+from src.features.game_status import is_final_game
 from src.features.injury_impact import compute_team_injury_impact, load_weights
 
 logging.basicConfig(
@@ -74,41 +75,61 @@ def _replace_table(engine: Engine, schema: str, table: str, df: pd.DataFrame) ->
     return len(df)
 
 
+def _int_or_none(value):
+    """int(value) if it's a real number, else None -- guards against
+    pandas turning a NULL INTEGER column into float NaN on read (verified:
+    pd.read_sql upcasts a nullable int column to float64/NaN), which then
+    fails the INSERT against an INTEGER column on Postgres (SQLite silently
+    coerces NaN to NULL, which is why this only shows up in production)."""
+    return int(value) if pd.notna(value) else None
+
+
 def _compute_team_game_stats(games: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for _, g in games.iterrows():
-        is_final = g["status"] == "final" and pd.notna(g["home_score"]) and pd.notna(g["away_score"])
+        final = is_final_game(g)
         home_win = away_win = None
         home_margin = away_margin = None
-        if is_final:
+        if final:
             home_margin = int(g["home_score"] - g["away_score"])
             away_margin = -home_margin
-            home_win = home_margin > 0
-            away_win = away_margin > 0
+            if home_margin > 0:
+                home_win, away_win = True, False
+            elif home_margin < 0:
+                home_win, away_win = False, True
+            # else: tie -- leave both win flags None rather than a false "loss"
+            # for both teams; _compute_recent_form scores it 0.5 via margin.
+        home_points_for = _int_or_none(g["home_score"])
+        away_points_for = _int_or_none(g["away_score"])
+        season = _int_or_none(g["season"])
+        week = _int_or_none(g["week"])
         rows.append({"team_id": g["home_team_id"], "opponent_id": g["away_team_id"], "game_id": g["game_id"],
-                     "season": g["season"], "week": g["week"], "is_home": True,
-                     "points_for": g["home_score"], "points_against": g["away_score"],
+                     "season": season, "week": week, "is_home": True,
+                     "points_for": home_points_for, "points_against": away_points_for,
                      "win": home_win, "margin": home_margin})
         rows.append({"team_id": g["away_team_id"], "opponent_id": g["home_team_id"], "game_id": g["game_id"],
-                     "season": g["season"], "week": g["week"], "is_home": False,
-                     "points_for": g["away_score"], "points_against": g["home_score"],
+                     "season": season, "week": week, "is_home": False,
+                     "points_for": away_points_for, "points_against": home_points_for,
                      "win": away_win, "margin": away_margin})
     return pd.DataFrame(rows)
 
 
 def _compute_recent_form(team_game_stats: pd.DataFrame) -> pd.DataFrame:
     """Win pct over the last RECENT_FORM_WINDOW *completed* games strictly
-    before this one, per team. Returns team_id, game_id, recent_form."""
+    before this one, per team (a tie counts as 0.5, matching Elo's
+    treatment of ties -- see src/features/elo.py's _actual_score).
+    Returns team_id, game_id, recent_form."""
     rows = []
     ordered = team_game_stats.sort_values(["team_id", "season", "week", "game_id"], kind="stable")
     for team_id, team_games in ordered.groupby("team_id", sort=False):
-        history: list[bool] = []
+        history: list[float] = []
         for _, g in team_games.iterrows():
             recent = history[-RECENT_FORM_WINDOW:]
             recent_form = (sum(recent) / len(recent)) if recent else None
             rows.append({"team_id": team_id, "game_id": g["game_id"], "recent_form": recent_form})
-            if g["win"] is not None and not pd.isna(g["win"]):
-                history.append(bool(g["win"]))
+            margin = g["margin"]
+            if pd.notna(margin):
+                history.append(1.0 if margin > 0 else 0.0 if margin < 0 else 0.5)
     return pd.DataFrame(rows)
 
 
@@ -117,33 +138,46 @@ def _compute_injury_impact_rows(games: pd.DataFrame, injuries: pd.DataFrame, pla
     injuries = injuries.copy()
     injuries["reported_at"] = pd.to_datetime(injuries["reported_at"], errors="coerce")
 
+    # Prefer the real report timestamp when nflverse provides one. It often
+    # doesn't -- nflverse dropped `date_modified` from the 2025 injuries
+    # file (see README design notes), so reported_at is NULL for real 2025
+    # data. Fall back to (season, week) <= this game's (season, week):
+    # injury reports are filed during the days leading into that week's
+    # games, so a report from the same week always precedes kickoff.
+    # Coarser than a timestamp, but still point-in-time safe -- it can
+    # only ever look backward, never forward.
+    has_timestamp = injuries["reported_at"].notna()
+    timestamped = injuries[has_timestamp]
+    fallback_pool = injuries[~has_timestamp & injuries["season"].notna() & injuries["week"].notna()]
+
+    # The by-week fallback only depends on (season, week), not the exact
+    # game_date, so it's computed once per distinct (season, week) instead
+    # of rescanning the whole injuries table for every game -- a typical
+    # week has ~16 games sharing the same cutoff.
+    by_week_cache: dict[tuple, pd.DataFrame] = {}
+
+    def _by_week_pool(season, week) -> pd.DataFrame:
+        key = (season, week)
+        if key not in by_week_cache:
+            by_week_cache[key] = fallback_pool[
+                (fallback_pool["season"] < season)
+                | ((fallback_pool["season"] == season) & (fallback_pool["week"] <= week))
+            ]
+        return by_week_cache[key]
+
     rows = []
     for _, g in games.iterrows():
         cutoff = pd.to_datetime(g["game_date"], errors="coerce")
-
-        # Prefer the real report timestamp when nflverse provides one. It
-        # often doesn't -- nflverse dropped `date_modified` from the 2025
-        # injuries file (see README design notes), so reported_at is NULL
-        # for real 2025 data. Fall back to (season, week) <= this game's
-        # (season, week): injury reports are filed during the days leading
-        # into that week's games, so a report from the same week always
-        # precedes kickoff. Coarser than a timestamp, but still point-in-time
-        # safe -- it can only ever look backward, never forward.
-        has_timestamp = injuries["reported_at"].notna()
-        by_timestamp = has_timestamp & (injuries["reported_at"] < cutoff)
-        by_week = (~has_timestamp) & injuries["season"].notna() & injuries["week"].notna() & (
-            (injuries["season"] < g["season"])
-            | ((injuries["season"] == g["season"]) & (injuries["week"] <= g["week"]))
-        )
-        as_of = injuries[by_timestamp | by_week]
+        by_timestamp = timestamped[timestamped["reported_at"] < cutoff] if pd.notna(cutoff) else timestamped.iloc[0:0]
+        as_of = pd.concat([by_timestamp, _by_week_pool(g["season"], g["week"])], ignore_index=True)
 
         impact_by_team = compute_team_injury_impact(as_of, players, weights=weights)
         for team_id in (g["home_team_id"], g["away_team_id"]):
             rows.append({
                 "team_id": team_id,
                 "game_id": g["game_id"],
-                "season": g["season"],
-                "week": g["week"],
+                "season": _int_or_none(g["season"]),
+                "week": _int_or_none(g["week"]),
                 "injury_impact": impact_by_team.get(team_id, 0.0),
                 "config_version": weights["version"],
             })
@@ -234,8 +268,8 @@ def _assemble_game_features(games: pd.DataFrame, elo: pd.DataFrame, injury_rows:
 
         rows.append({
             "game_id": game_id,
-            "season": g["season"],
-            "week": g["week"],
+            "season": _int_or_none(g["season"]),
+            "week": _int_or_none(g["week"]),
             "home_team_id": home_id,
             "away_team_id": away_id,
             "home_elo": home_elo,
@@ -243,8 +277,8 @@ def _assemble_game_features(games: pd.DataFrame, elo: pd.DataFrame, injury_rows:
             "elo_difference": (home_elo - away_elo) if home_elo is not None and away_elo is not None else None,
             "home_injury_impact": injury_by_team_game.get((home_id, game_id)),
             "away_injury_impact": injury_by_team_game.get((away_id, game_id)),
-            "home_rest_days": g.get("home_rest_days"),
-            "away_rest_days": g.get("away_rest_days"),
+            "home_rest_days": _int_or_none(g.get("home_rest_days")),
+            "away_rest_days": _int_or_none(g.get("away_rest_days")),
             "home_recent_form": form_by_team_game.get((home_id, game_id)),
             "away_recent_form": form_by_team_game.get((away_id, game_id)),
             "temperature": None,
