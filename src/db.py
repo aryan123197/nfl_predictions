@@ -75,16 +75,24 @@ def qualified_table(schema: str, table: str) -> str:
     return f"{schema}.{table}"
 
 
-def init_schema() -> None:
-    """Create the bronze + metadata tables for the active database.
+SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql"]
 
-    For Postgres, this executes schema/001_bronze.sql directly. For
-    SQLite (local/dev/test only) it applies a translated version with
-    schemas flattened and Postgres-only types swapped out, so
-    `python -m src.ingest.run_ingestion` works with zero setup.
+
+def init_schema() -> None:
+    """Create all bronze + silver + metadata tables for the active database.
+
+    For Postgres, this executes the schema/*.sql files directly, in
+    order. For SQLite (local/dev/test only) it applies a translated
+    version with schemas flattened and Postgres-only types swapped out,
+    so `python -m src.ingest.run_ingestion` works with zero setup.
     """
+    for filename in SCHEMA_FILES:
+        apply_ddl_file(filename)
+
+
+def apply_ddl_file(filename: str) -> None:
     engine = get_engine()
-    ddl_path = os.path.join(os.path.dirname(__file__), "..", "schema", "001_bronze.sql")
+    ddl_path = os.path.join(os.path.dirname(__file__), "..", "schema", filename)
     with open(ddl_path) as f:
         raw_sql = f.read()
 
@@ -110,10 +118,13 @@ def _translate_ddl_for_sqlite(sql: str) -> str:
     out = sql
     out = out.replace("CREATE SCHEMA IF NOT EXISTS bronze;", "")
     out = out.replace("CREATE SCHEMA IF NOT EXISTS metadata;", "")
+    out = out.replace("CREATE SCHEMA IF NOT EXISTS silver;", "")
     out = out.replace("bronze.", "bronze_")
     out = out.replace("metadata.", "metadata_")
+    out = out.replace("silver.", "silver_")
     out = out.replace("BIGSERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
     out = out.replace("TIMESTAMPTZ", "TEXT")
+    out = out.replace("DATE", "TEXT")
     out = out.replace("now()", "CURRENT_TIMESTAMP")
     out = out.replace("DOUBLE PRECISION", "REAL")
     return out

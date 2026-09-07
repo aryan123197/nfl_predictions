@@ -14,7 +14,7 @@ This README tracks **implementation status** against that design.
 | Phase | What | Status |
 |---|---|---|
 | 1 | Data ingestion (provider → bronze) | ✅ **Working** — see below |
-| 2 | Bronze → Silver → Gold transforms | ⬜ Not started |
+| 2 | Bronze → Silver → Gold transforms | 🟡 **Silver working** — Gold deferred to Phase 3, see below |
 | 3 | Point-in-time feature engineering | ⬜ Not started |
 | 4 | ML training (XGBoost baseline) | ⬜ Not started |
 | 5 | Walk-forward backtesting (2025) | ⬜ Not started |
@@ -52,6 +52,51 @@ rows, and 25,066 player records; confirmed games upsert correctly on
 re-run (no duplicates) while injury snapshots append correctly (each
 report is a point-in-time record). 13/13 tests pass, including 8 that hit
 the live data source.
+
+---
+
+## What's actually built right now (Phase 2 — Silver only)
+
+Bronze → Silver transform: cleans, deduplicates, and normalizes the raw
+bronze rows into analytics-ready tables, idempotently re-runnable (unlike
+bronze, re-running a season updates silver rows in place instead of
+duplicating them).
+
+```
+schema/002_silver.sql              Silver schema (teams, games, players, injuries, odds)
+src/transform/team_aliases.py      Franchise relocation map (OAK→LV, SD→LAC, STL→LA)
+src/transform/silver_transform.py  CLI entrypoint: bronze → silver
+tests/test_silver_transform.py     Offline transform logic tests (in-memory SQLite)
+```
+
+**Verified working end-to-end** against the same live 2025 Week 1 data used
+to validate Phase 1: 32 teams, 16 games, 16 odds rows, 24,828 players, and
+197 injury reports normalized into silver, with no stale team aliases
+(OAK/SD/STL) surviving the transform. 16/16 offline tests pass (8 from
+Phase 1 + 8 new).
+
+**Gold layer is deferred to Phase 3.** The design doc's Gold tables
+(`team_rolling_stats`, `team_ratings`, `injury_impact`, `game_features`,
+etc.) depend on feature-engineering logic — rolling stats, Elo, the
+injury-weight config from `DECISIONS.md` #3 — not just cleaned data, so
+building them under "Phase 2" would blur data cleaning with feature
+engineering. The two Gold tables that *are* mechanically derivable from
+silver alone (`game_odds`, `team_game_stats`) are left for Phase 3 too, to
+keep Gold as one coherent slice built alongside the features that depend
+on it.
+
+**Design decisions carried into this slice** (see `DECISIONS.md` for full
+reasoning):
+- `silver.injuries` stays point-in-time (one row per bronze report row,
+  upserted on `bronze_id`) — never collapsed to "current status per
+  player" — so injury trend features stay possible in Phase 3.
+- `silver.odds` carries `source` and `sportsbook` columns from day one
+  (Decision #2), even though V1 has exactly one derived odds source, so a
+  second sportsbook is additive later rather than a schema migration.
+- Team ID normalization (`src/transform/team_aliases.py`) is a small,
+  explicit, versioned map — not general fuzzy matching — covering only
+  the relocations that actually appear in ingested seasons (Raiders,
+  Chargers, Rams).
 
 ### Quickstart
 
