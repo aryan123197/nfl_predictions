@@ -1,0 +1,21 @@
+# --- Phase 1: ingestion ---
+pandas>=2.2
+requests>=2.31
+sqlalchemy>=2.0
+psycopg2-binary>=2.9   # Postgres driver (not needed for local sqlite dev)
+python-dotenv>=1.0
+
+# --- Phase 3+: features / ML (not required for Phase 1, listed here
+#     so the file matches the full roadmap; install later with
+#     `pip install -r requirements-ml.txt`) ---
+# pyarrow>=15
+# xgboost>=2.0
+# lightgbm>=4.3
+# scikit-learn>=1.4
+# mlflow>=2.11
+# shap>=0.45
+# fastapi>=0.110
+# uvicorn>=0.29
+
+# --- testing ---
+pytest>=8.0

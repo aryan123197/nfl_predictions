@@ -1,0 +1,23 @@
+version: "3.9"
+
+# Local Postgres for development. In production (2026 live season),
+# per the design doc this gets replaced by a small hosted Postgres
+# instance (e.g. Neon, Supabase, or Railway free/hobby tier) so the
+# pipeline can run on a schedule even when your laptop is off. Point
+# DATABASE_URL at that instead of this container -- nothing else changes.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nfl_predict_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nfl_predict
+      POSTGRES_PASSWORD: nfl_predict_dev
+      POSTGRES_DB: nfl_predict
+    ports:
+      - "5432:5432"
+    volumes:
+      - nfl_predict_pgdata:/var/lib/postgresql/data
+
+volumes:
+  nfl_predict_pgdata:
