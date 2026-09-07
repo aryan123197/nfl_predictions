@@ -118,7 +118,37 @@ consistently in both training and serving.
 
 ---
 
+## 5. Injury point-in-time cutoff when `reported_at` is missing
+
+**Status:** Decided and implemented (Phase 3 Slice A).
+
+**Problem:** Decision #3's injury impact calculation needs a cutoff
+timestamp (design doc §19: only injuries reported before the prediction
+time may count). `silver.injuries.reported_at` comes from nflverse's
+`date_modified` field — which, per the Phase 1 README notes, nflverse
+dropped from the 2025 injuries file entirely. Verified against live
+2025 data during Slice A implementation: `reported_at` is NULL for
+every real 2025 row, not just an edge case. A naive `reported_at <
+game_date` filter silently excludes every injury, producing an
+always-zero injury impact feature with no error to signal it.
+
+**Decision:** Prefer `reported_at` when present. When it's NULL, fall
+back to `(season, week) <= this game's (season, week)` — an injury
+report is always filed during the days leading into that week's games,
+so a report from the same week necessarily precedes kickoff. Coarser
+than a real timestamp (week-level instead of hour-level), but still
+strictly point-in-time safe: it can only look backward, never forward.
+Implemented in `src/transform/gold_transform.py::_compute_injury_impact_rows`.
+
+**Open follow-up:** If a future data source restores real report
+timestamps, prefer them automatically (the code already does) — no
+further action needed unless the fallback needs removing entirely.
+
+---
+
 ## Revision history
 
 - 2026-09-07: Initial decisions recorded for all four open questions from
   the design doc review notes.
+- 2026-09-07: Added decision #5 (injury point-in-time cutoff fallback),
+  found while implementing and live-testing Phase 3 Slice A.

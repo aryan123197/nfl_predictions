@@ -5,6 +5,9 @@ sqlalchemy>=2.0
 psycopg2-binary>=2.9   # Postgres driver (not needed for local sqlite dev)
 python-dotenv>=1.0
 
+# --- Phase 3: features (injury impact config) ---
+pyyaml>=6.0
+
 # --- Phase 3+: features / ML (not required for Phase 1, listed here
 #     so the file matches the full roadmap; install later with
 #     `pip install -r requirements-ml.txt`) ---

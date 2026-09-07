@@ -102,6 +102,8 @@ def _upsert_games(engine: Engine, games: pd.DataFrame) -> int:
                 "away_team_id": canonical_team_id(row.get("away_team")),
                 "home_score": int(row["home_score"]) if pd.notna(row.get("home_score")) else None,
                 "away_score": int(row["away_score"]) if pd.notna(row.get("away_score")) else None,
+                "home_rest_days": int(row["home_rest"]) if pd.notna(row.get("home_rest")) else None,
+                "away_rest_days": int(row["away_rest"]) if pd.notna(row.get("away_rest")) else None,
                 "status": _game_status(row),
             }
             existing = conn.execute(
@@ -112,16 +114,17 @@ def _upsert_games(engine: Engine, games: pd.DataFrame) -> int:
                 conn.execute(
                     text(f"UPDATE {table} SET season=:season, week=:week, game_date=:game_date, "
                          f"home_team_id=:home_team_id, away_team_id=:away_team_id, "
-                         f"home_score=:home_score, away_score=:away_score, status=:status "
+                         f"home_score=:home_score, away_score=:away_score, "
+                         f"home_rest_days=:home_rest_days, away_rest_days=:away_rest_days, status=:status "
                          f"WHERE game_id=:game_id"),
                     payload,
                 )
             else:
                 conn.execute(
                     text(f"INSERT INTO {table} (game_id, season, week, game_date, home_team_id, "
-                         f"away_team_id, home_score, away_score, status) "
+                         f"away_team_id, home_score, away_score, home_rest_days, away_rest_days, status) "
                          f"VALUES (:game_id, :season, :week, :game_date, :home_team_id, "
-                         f":away_team_id, :home_score, :away_score, :status)"),
+                         f":away_team_id, :home_score, :away_score, :home_rest_days, :away_rest_days, :status)"),
                     payload,
                 )
             count += 1
@@ -214,6 +217,8 @@ def _upsert_injuries(engine: Engine, injuries: pd.DataFrame, source: str) -> int
                 "bronze_id": int(row["id"]),
                 "player_id": row.get("player_id"),
                 "team_id": canonical_team_id(row.get("team")),
+                "season": int(row["season"]) if pd.notna(row.get("season")) else None,
+                "week": int(row["week"]) if pd.notna(row.get("week")) else None,
                 "status": row.get("report_status"),
                 "injury_type": row.get("report_primary_injury"),
                 "reported_at": row.get("date_modified"),
@@ -225,16 +230,16 @@ def _upsert_injuries(engine: Engine, injuries: pd.DataFrame, source: str) -> int
             ).fetchone()
             if existing:
                 conn.execute(
-                    text(f"UPDATE {table} SET player_id=:player_id, team_id=:team_id, status=:status, "
-                         f"injury_type=:injury_type, reported_at=:reported_at, source=:source "
-                         f"WHERE bronze_id=:bronze_id"),
+                    text(f"UPDATE {table} SET player_id=:player_id, team_id=:team_id, season=:season, "
+                         f"week=:week, status=:status, injury_type=:injury_type, reported_at=:reported_at, "
+                         f"source=:source WHERE bronze_id=:bronze_id"),
                     payload,
                 )
             else:
                 conn.execute(
-                    text(f"INSERT INTO {table} (bronze_id, player_id, team_id, status, injury_type, "
-                         f"reported_at, source) "
-                         f"VALUES (:bronze_id, :player_id, :team_id, :status, :injury_type, "
+                    text(f"INSERT INTO {table} (bronze_id, player_id, team_id, season, week, status, "
+                         f"injury_type, reported_at, source) "
+                         f"VALUES (:bronze_id, :player_id, :team_id, :season, :week, :status, :injury_type, "
                          f":reported_at, :source)"),
                     payload,
                 )

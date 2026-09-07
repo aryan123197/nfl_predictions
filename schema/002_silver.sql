@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS silver.games (
     away_team_id  TEXT NOT NULL REFERENCES silver.teams(team_id),
     home_score    INTEGER,
     away_score    INTEGER,
+    home_rest_days INTEGER,
+    away_rest_days INTEGER,
     venue_id      TEXT,  -- not populated yet: nflverse schedule has no venue table (see DECISIONS.md follow-ups)
     status        TEXT NOT NULL,  -- scheduled|final
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -76,9 +78,11 @@ CREATE TABLE IF NOT EXISTS silver.injuries (
     bronze_id        BIGINT NOT NULL,
     player_id        TEXT,
     team_id          TEXT REFERENCES silver.teams(team_id),
+    season           INTEGER,
+    week             INTEGER,
     status           TEXT,
     injury_type      TEXT,
-    reported_at      TIMESTAMPTZ,
+    reported_at      TIMESTAMPTZ,  -- often NULL: nflverse dropped this field for 2025 (see README design notes) -- (season, week) is the point-in-time fallback, see gold_transform.py
     expected_return  TIMESTAMPTZ,  -- not populated: nflverse injury reports don't carry this (see DECISIONS.md follow-ups)
     source           TEXT NOT NULL
 );

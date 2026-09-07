@@ -14,8 +14,9 @@ This README tracks **implementation status** against that design.
 | Phase | What | Status |
 |---|---|---|
 | 1 | Data ingestion (provider → bronze) | ✅ **Working** — see below |
-| 2 | Bronze → Silver → Gold transforms | 🟡 **Silver working** — Gold deferred to Phase 3, see below |
-| 3 | Point-in-time feature engineering | ⬜ Not started |
+| 2 | Bronze → Silver → Gold transforms | 🟡 **Silver working** — Gold moved into Phase 3 |
+| 3 | Point-in-time feature engineering | 🟡 **Slice A working** — Elo, injury impact, non-EPA `gold.game_features`; Slice B (play-by-play, rolling EPA stats) not started |
+| 4 | ML training (XGBoost baseline) | ⬜ Not started |
 | 4 | ML training (XGBoost baseline) | ⬜ Not started |
 | 5 | Walk-forward backtesting (2025) | ⬜ Not started |
 | 6 | Automation (GitHub Actions) | ⬜ Not started |
@@ -189,10 +190,60 @@ None of these block starting Phase 2 (Bronze → Silver → Gold), but #1 and
 
 ---
 
+## What's actually built right now (Phase 3 — Slice A)
+
+Silver → Gold: Elo team ratings, injury impact v0, and a first
+`gold.game_features` table — everything derivable without play-by-play
+data. See `DECISIONS.md` for the reasoning behind every design choice
+below.
+
+```
+config/injury_impact_v0.yaml        Versioned position/status weight table (Decision #3)
+src/features/elo.py                 Elo rating computation (design doc §17)
+src/features/injury_impact.py       Injury impact heuristic (design doc §16)
+schema/003_gold.sql                 Gold schema, Slice A tables only
+src/transform/gold_transform.py     CLI entrypoint: silver → gold
+tests/test_elo.py                   Elo unit tests (no DB)
+tests/test_injury_impact.py         Injury impact unit tests (no DB)
+tests/test_gold_transform.py        Point-in-time correctness tests (in-memory SQLite)
+```
+
+**What's in `gold.game_features`:** `home_elo`/`away_elo`/`elo_difference`,
+`home_injury_impact`/`away_injury_impact`, `home_rest_days`/`away_rest_days`,
+`home_recent_form`/`away_recent_form` (win % over the last 4 completed
+games), and `opening_spread`/`current_spread`/`spread_movement` (V1 has
+one odds snapshot, so movement is always 0 — see Decision #2).
+`temperature`/`wind` columns exist per the design doc's example feature
+set but stay NULL — no weather provider yet. EPA-based columns
+(`home_off_epa`, `home_qb_epa`, etc.) are not in the table at all yet —
+they don't exist as a concept until Slice B's play-by-play ingestion
+lands.
+
+**Point-in-time correctness (design doc §19) is the core guarantee
+here**, verified two ways: unit tests on the pure Elo/injury-impact
+functions, and DB-backed tests that a *later* week's rating/injury/form
+never leaks into an *earlier* game's features. Verified against live
+2025 Weeks 1-2 data too — this is how a real gap was caught during
+implementation: nflverse dropped injury report timestamps for 2025
+entirely (see Decision #5), which would have silently zeroed out every
+injury feature without the live check.
+
+**Deferred to Slice B:** play-by-play ingestion, `silver.plays`,
+rolling EPA/success-rate team stats, player-level features, and the
+remaining `gold.team_rolling_stats`/`player_rolling_stats` tables — all
+genuinely dependent on play-by-play data that isn't ingested yet.
+
+**Verified working end-to-end** against live 2025 Weeks 1-2 nflverse
+data: 32 teams, 32 games, 64 team-ratings rows, 64 injury-impact rows,
+32 `game_odds` rows, 32 `game_features` rows. 36/36 offline tests pass.
+
+---
+
 ## Next steps
 
-The natural next slice is **Phase 2**: `bronze.games_raw` /
-`bronze.injuries_raw` → `silver.games` / `silver.injuries` / `silver.teams`,
-applying the type normalization, deduplication, and ID normalization called
-for in §11 of the design doc. That unlocks Phase 3 (rolling stats + the
-`gold.game_features` table) and is a natural place to pick this back up.
+**Slice B** (play-by-play ingestion → `silver.plays` → rolling EPA/
+success-rate team stats → player features) is the natural next step —
+it fills in the EPA-based columns the design doc's `gold.game_features`
+example expects (§18) and unlocks real team/player-quality signal
+beyond Elo. After that, Phase 4 (ML training) can start against a
+reasonably complete feature table.

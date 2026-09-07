@@ -1,0 +1,55 @@
+# Injury impact v0 -- see DECISIONS.md #3.
+#
+# A simple, versioned position-weighted heuristic for estimating a
+# team's injury impact, per design doc section 16. This is intentionally
+# crude: it has no depth-chart/starter data to work with yet (nflverse
+# doesn't give us one), so every reported injury at a position is
+# weighted the same regardless of whether that player is QB1 or QB3.
+# That's a known limitation, not an oversight -- see DECISIONS.md #3's
+# follow-up: these values should be sanity-checked against real
+# historical spread movement before Phase 4 training, not just intuition.
+#
+# version bump this file (and note it in DECISIONS.md) any time the
+# weights change -- predictions made under different versions of this
+# file are not directly comparable.
+version: v0
+
+# Points of estimated team impact if this position is out. Negative =
+# bad for the team. Position values come from silver.players.position
+# (nflverse position codes).
+position_weights:
+  QB: -10.0
+  T: -4.0     # offensive tackle
+  G: -4.0     # offensive guard
+  C: -4.0     # center
+  DE: -4.0
+  DT: -4.0
+  NT: -4.0
+  WR: -3.0
+  CB: -3.0
+  RB: -2.0
+  TE: -2.0
+  S: -2.0
+  FS: -2.0
+  SS: -2.0
+  LB: -1.5
+  OLB: -1.5
+  ILB: -1.5
+  K: -1.0
+  P: -0.5
+
+# Fallback weight for any position not listed above.
+default_position_weight: -1.0
+
+# Injury report status scales how much of the position weight actually
+# applies -- a "Questionable" WR1 is not as costly as an "Out" WR1.
+# Multiplied against position_weight.
+status_multipliers:
+  Out: 1.0
+  Doubtful: 0.75
+  Questionable: 0.4
+  Probable: 0.1
+
+# Fallback multiplier for any report_status not listed above (e.g. a
+# blank/unrecognized status string).
+default_status_multiplier: 0.25

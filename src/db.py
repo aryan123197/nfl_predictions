@@ -75,7 +75,7 @@ def qualified_table(schema: str, table: str) -> str:
     return f"{schema}.{table}"
 
 
-SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql"]
+SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql", "003_gold.sql"]
 
 
 def init_schema() -> None:
@@ -119,9 +119,11 @@ def _translate_ddl_for_sqlite(sql: str) -> str:
     out = out.replace("CREATE SCHEMA IF NOT EXISTS bronze;", "")
     out = out.replace("CREATE SCHEMA IF NOT EXISTS metadata;", "")
     out = out.replace("CREATE SCHEMA IF NOT EXISTS silver;", "")
+    out = out.replace("CREATE SCHEMA IF NOT EXISTS gold;", "")
     out = out.replace("bronze.", "bronze_")
     out = out.replace("metadata.", "metadata_")
     out = out.replace("silver.", "silver_")
+    out = out.replace("gold.", "gold_")
     out = out.replace("BIGSERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
     out = out.replace("TIMESTAMPTZ", "TEXT")
     out = out.replace("DATE", "TEXT")
