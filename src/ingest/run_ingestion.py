@@ -11,8 +11,9 @@ Usage:
     python -m src.ingest.run_ingestion --season 2025 --skip-injuries
 
 This intentionally does NOT ingest play-by-play here -- that's a
-separate, heavier job (Phase 3) since play-by-play files are 40-80MB
-per season and aren't needed for the first game-level model.
+separate, heavier job (src/ingest/run_pbp_ingestion.py, Phase 3 Slice B)
+since play-by-play files are 40-80MB per season and weren't needed for
+the first game-level model.
 """
 
 from __future__ import annotations
@@ -21,12 +22,12 @@ import argparse
 import hashlib
 import logging
 import sys
-from datetime import datetime, timezone
 
 import pandas as pd
 from sqlalchemy import text
 
 from src.db import get_engine, init_schema, qualified_table
+from src.ingest.pipeline_metadata import finish_run, start_run
 from src.providers.base import NFLDataProvider, ProviderError
 from src.providers.nflverse_provider import NFLverseProvider
 
@@ -39,43 +40,6 @@ logger = logging.getLogger("ingestion")
 
 def _row_hash(row: pd.Series) -> str:
     return hashlib.sha256(row.to_json().encode("utf-8")).hexdigest()[:16]
-
-
-def _start_run(pipeline_name: str) -> int:
-    engine = get_engine()
-    table = qualified_table("metadata", "pipeline_runs")
-    is_postgres = engine.dialect.name != "sqlite"
-    returning = " RETURNING run_id" if is_postgres else ""
-
-    with engine.begin() as conn:
-        result = conn.execute(
-            text(f"INSERT INTO {table} (pipeline_name, started_at, status) "
-                 f"VALUES (:name, :started_at, 'running'){returning}"),
-            {"name": pipeline_name, "started_at": datetime.now(timezone.utc).isoformat()},
-        )
-        if is_postgres:
-            run_id = result.scalar_one()
-        else:
-            run_id = result.lastrowid
-    return run_id
-
-
-def _finish_run(run_id: int, status: str, records_processed: int, error_message: str | None = None) -> None:
-    engine = get_engine()
-    table = qualified_table("metadata", "pipeline_runs")
-    with engine.begin() as conn:
-        conn.execute(
-            text(f"UPDATE {table} SET completed_at = :completed_at, status = :status, "
-                 f"records_processed = :records_processed, error_message = :error_message "
-                 f"WHERE run_id = :run_id"),
-            {
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "status": status,
-                "records_processed": records_processed,
-                "error_message": error_message,
-                "run_id": run_id,
-            },
-        )
 
 
 def _upsert_games(df: pd.DataFrame, source: str, run_id: int) -> int:
@@ -164,7 +128,7 @@ def _upsert_players(df: pd.DataFrame, source: str, run_id: int, season: int) -> 
 def run(provider: NFLDataProvider, season: int, week: int | None = None,
         skip_injuries: bool = False, skip_players: bool = False) -> None:
     init_schema()
-    run_id = _start_run("nfl_data_pipeline")
+    run_id = start_run("nfl_data_pipeline")
     total_records = 0
 
     try:
@@ -185,16 +149,16 @@ def run(provider: NFLDataProvider, season: int, week: int | None = None,
             total_records += _upsert_players(players, source=provider.name, run_id=run_id, season=season)
             logger.info("Upserted %d player rows", len(players))
 
-        _finish_run(run_id, status="success", records_processed=total_records)
+        finish_run(run_id, status="success", records_processed=total_records)
         logger.info("Pipeline run %s completed successfully (%d records)", run_id, total_records)
 
     except ProviderError as exc:
         logger.error("Provider error: %s", exc)
-        _finish_run(run_id, status="failed", records_processed=total_records, error_message=str(exc))
+        finish_run(run_id, status="failed", records_processed=total_records, error_message=str(exc))
         raise
     except Exception as exc:  # noqa: BLE001 - top-level pipeline boundary
         logger.exception("Unexpected pipeline failure")
-        _finish_run(run_id, status="failed", records_processed=total_records, error_message=str(exc))
+        finish_run(run_id, status="failed", records_processed=total_records, error_message=str(exc))
         raise
 
 

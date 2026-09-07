@@ -95,3 +95,22 @@ def test_get_odds_derived_from_games():
 
     assert not df.empty
     assert {"game_id", "spread", "total"}.issubset(set(df.columns))
+
+
+@pytest.mark.integration
+def test_get_plays_returns_real_scrimmage_data():
+    """Regression test: play_by_play_{season}.csv.gz is gzip-compressed,
+    and _fetch_csv's pd.read_csv call had no `compression` argument --
+    pandas can't infer compression from a BytesIO payload (no filename
+    suffix to infer from), so this silently tried to parse raw gzip
+    bytes as text and raised UnicodeDecodeError. Found by running this
+    against real data during Phase 3 Slice B, not by a unit test."""
+    provider = NFLverseProvider()
+    df = provider.get_plays(season=2024, week=1)
+
+    assert not df.empty
+    assert {"game_id", "epa", "pass_attempt", "rush_attempt", "posteam", "defteam"}.issubset(set(df.columns))
+    # a real scrimmage play must have a non-null EPA
+    scrimmage = df[(df["pass_attempt"] == 1) | (df["rush_attempt"] == 1)]
+    assert not scrimmage.empty
+    assert scrimmage["epa"].notna().any()

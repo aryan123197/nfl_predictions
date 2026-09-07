@@ -76,7 +76,22 @@ def qualified_table(schema: str, table: str) -> str:
     return f"{schema}.{table}"
 
 
-SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql", "003_gold.sql"]
+def to_sql_target(schema: str, table: str) -> dict:
+    """Return the {name, schema} kwargs for DataFrame.to_sql on the active
+    dialect -- SQLite has no schema support (flattened table names, no
+    `schema=` kwarg), Postgres uses a real schema. Use for bulk
+    insert/replace of large tables (e.g. play-by-play) where a per-row
+    upsert loop doesn't scale; qualified_table() remains what raw-SQL
+    (SELECT/UPDATE/DELETE) statements should use.
+    """
+    engine = get_engine()
+    if engine.dialect.name == "sqlite":
+        return {"name": f"{schema}_{table}", "schema": None}
+    return {"name": table, "schema": schema}
+
+
+SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql", "003_gold.sql",
+                "004_silver_plays.sql", "005_gold_rolling_stats.sql"]
 
 
 def init_schema() -> None:

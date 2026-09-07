@@ -1,12 +1,21 @@
 """
-Phase 3 Slice A: silver -> gold (feature engineering, non-EPA slice).
+Phase 3, Slices A + B: silver -> gold (feature engineering).
 
 Builds:
-    gold.team_ratings      Elo, one row per team per game
-    gold.team_game_stats   points for/against, win/loss, margin
-    gold.injury_impact     injury_impact_v0 heuristic, one row per team per game
-    gold.game_odds         reshaped from silver.odds
-    gold.game_features     one row per game, assembled from all of the above
+    gold.team_ratings       Elo, one row per team per game
+    gold.team_game_stats    points for/against, win/loss, margin
+    gold.injury_impact      injury_impact_v0 heuristic, one row per team per game
+    gold.game_odds          reshaped from silver.odds
+    gold.team_rolling_stats play-by-play-derived rolling stats (Slice B, design doc section 14)
+    gold.game_features      one row per game, assembled from all of the above
+
+gold.game_features is fully owned here, including its EPA columns (added
+in Slice B) -- a separate script partially UPDATE-ing those columns
+after this module's full DELETE+INSERT would create an ordering hazard
+(whichever ran last wins, silently). If silver.plays has no rows yet for
+a season (pbp not ingested), the EPA columns just come out NULL --
+same graceful-degradation pattern as temperature/wind having no
+provider at all.
 
 Unlike silver_transform (which processes one season/week at a time),
 this recomputes gold from ALL of silver.games on every run -- Elo and
@@ -44,6 +53,7 @@ from src.db import get_engine, init_schema, qualified_table
 from src.features.elo import compute_elo_ratings
 from src.features.game_status import is_final_game
 from src.features.injury_impact import compute_team_injury_impact, load_weights
+from src.features.rolling_stats import compute_per_game_team_stats, compute_rolling_stats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,6 +77,15 @@ def _replace_table(engine: Engine, schema: str, table: str, df: pd.DataFrame) ->
         conn.execute(text(f"DELETE FROM {qualified}"))
         if df.empty:
             return 0
+        # Belt-and-suspenders on top of the targeted _int_or_none() calls:
+        # a column that legitimately mixes None with floats (e.g. a
+        # rolling-stat column that's NULL for a team's first game of the
+        # season) gets silently coerced to NaN by pandas at DataFrame
+        # construction -- Postgres accepts NaN into a DOUBLE PRECISION
+        # column without error (unlike INTEGER), but it round-trips as a
+        # real NaN value, not SQL NULL, which breaks `WHERE col IS NULL`
+        # for anything querying these tables directly.
+        df = df.where(pd.notna(df), None)
         cols = list(df.columns)
         placeholders = ", ".join(f":{c}" for c in cols)
         col_list = ", ".join(cols)
@@ -214,11 +233,13 @@ def run() -> dict[str, int]:
     games = _read_table(engine, "silver", "games")
     if games.empty:
         logger.warning("silver.games is empty -- nothing to build. Run silver_transform first.")
-        return {"team_ratings": 0, "team_game_stats": 0, "injury_impact": 0, "game_odds": 0, "game_features": 0}
+        return {"team_ratings": 0, "team_game_stats": 0, "injury_impact": 0, "game_odds": 0,
+                "team_rolling_stats": 0, "game_features": 0}
 
     injuries = _read_table(engine, "silver", "injuries")
     players = _read_table(engine, "silver", "players")
     odds = _read_table(engine, "silver", "odds")
+    plays = _read_table(engine, "silver", "plays")
 
     elo = compute_elo_ratings(games)
     elo_count = _replace_table(engine, "gold", "team_ratings", elo)
@@ -238,7 +259,12 @@ def run() -> dict[str, int]:
     odds_count = _replace_table(engine, "gold", "game_odds", game_odds)
     logger.info("Rebuilt gold.game_odds: %d rows", odds_count)
 
-    features = _assemble_game_features(games, elo, injury_rows, recent_form, game_odds)
+    per_game_play_stats = compute_per_game_team_stats(plays)
+    rolling_stats = compute_rolling_stats(per_game_play_stats, team_game_stats[["team_id", "game_id", "season", "week"]])
+    rolling_count = _replace_table(engine, "gold", "team_rolling_stats", rolling_stats)
+    logger.info("Rebuilt gold.team_rolling_stats: %d rows", rolling_count)
+
+    features = _assemble_game_features(games, elo, injury_rows, recent_form, game_odds, rolling_stats)
     features_count = _replace_table(engine, "gold", "game_features", features)
     logger.info("Rebuilt gold.game_features: %d rows", features_count)
 
@@ -247,16 +273,22 @@ def run() -> dict[str, int]:
         "team_game_stats": stats_count,
         "injury_impact": injury_count,
         "game_odds": odds_count,
+        "team_rolling_stats": rolling_count,
         "game_features": features_count,
     }
 
 
 def _assemble_game_features(games: pd.DataFrame, elo: pd.DataFrame, injury_rows: pd.DataFrame,
-                             recent_form: pd.DataFrame, game_odds: pd.DataFrame) -> pd.DataFrame:
+                             recent_form: pd.DataFrame, game_odds: pd.DataFrame,
+                             rolling_stats: pd.DataFrame) -> pd.DataFrame:
     elo_by_team_game = {(r["team_id"], r["game_id"]): r["elo_pre"] for _, r in elo.iterrows()}
     injury_by_team_game = {(r["team_id"], r["game_id"]): r["injury_impact"] for _, r in injury_rows.iterrows()}
     form_by_team_game = {(r["team_id"], r["game_id"]): r["recent_form"] for _, r in recent_form.iterrows()}
     odds_by_game = {r["game_id"]: r for _, r in game_odds.iterrows()}
+    # season_to_date is the window promoted into game_features -- last_4
+    # stays in gold.team_rolling_stats only, see schema/005_gold_rolling_stats.sql.
+    season_to_date = rolling_stats[rolling_stats["window"] == "season_to_date"] if not rolling_stats.empty else rolling_stats
+    rolling_by_team_game = {(r["team_id"], r["game_id"]): r for _, r in season_to_date.iterrows()}
 
     rows = []
     for _, g in games.iterrows():
@@ -265,6 +297,8 @@ def _assemble_game_features(games: pd.DataFrame, elo: pd.DataFrame, injury_rows:
         home_elo = elo_by_team_game.get((home_id, game_id))
         away_elo = elo_by_team_game.get((away_id, game_id))
         odds_row = odds_by_game.get(game_id)
+        home_rolling = rolling_by_team_game.get((home_id, game_id))
+        away_rolling = rolling_by_team_game.get((away_id, game_id))
 
         rows.append({
             "game_id": game_id,
@@ -286,6 +320,10 @@ def _assemble_game_features(games: pd.DataFrame, elo: pd.DataFrame, injury_rows:
             "opening_spread": odds_row["opening_spread"] if odds_row is not None else None,
             "current_spread": odds_row["current_spread"] if odds_row is not None else None,
             "spread_movement": odds_row["spread_movement"] if odds_row is not None else None,
+            "home_off_epa": home_rolling["off_epa"] if home_rolling is not None else None,
+            "away_off_epa": away_rolling["off_epa"] if away_rolling is not None else None,
+            "home_def_epa": home_rolling["def_epa"] if home_rolling is not None else None,
+            "away_def_epa": away_rolling["def_epa"] if away_rolling is not None else None,
         })
     return pd.DataFrame(rows)
 

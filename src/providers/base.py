@@ -53,11 +53,12 @@ class NFLDataProvider(ABC):
         """Return play-by-play rows for a season (optionally one week).
 
         Expected columns (bronze contract):
-            play_id, game_id, qtr, game_seconds_remaining, down,
-            ydstogo, yardline_100, posteam, defteam, play_type,
+            play_id, game_id, season, week, qtr, game_seconds_remaining,
+            down, ydstogo, yardline_100, posteam, defteam, play_type,
             yards_gained, epa, success, pass_attempt, rush_attempt,
-            interception, fumble_lost, touchdown, passer_player_id,
-            rusher_player_id, receiver_player_id
+            interception, fumble_lost, touchdown, sack, qb_hit,
+            first_down, third_down_converted, third_down_failed,
+            passer_player_id, rusher_player_id, receiver_player_id
         """
         raise NotImplementedError
 

@@ -38,16 +38,22 @@ class NFLverseProvider(NFLDataProvider):
         self._session = session or requests.Session()
 
     # -- internal helper --------------------------------------------------
-    def _fetch_csv(self, release: str, filename: str) -> pd.DataFrame:
+    def _fetch_csv(self, release: str, filename: str, timeout: int = REQUEST_TIMEOUT_SECONDS) -> pd.DataFrame:
         url = f"{BASE_URL}/{release}/{filename}"
         try:
-            resp = self._session.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
+            resp = self._session.get(url, timeout=timeout)
             resp.raise_for_status()
         except requests.RequestException as exc:
             raise ProviderError(f"Failed to fetch {url}: {exc}") from exc
 
+        # pandas infers compression from a file *path*'s suffix -- a
+        # BytesIO has no path, so a gzipped source (e.g. play_by_play's
+        # .csv.gz) silently isn't decompressed unless told explicitly.
+        # Verified against the real file: without this, read_csv raises
+        # a UnicodeDecodeError trying to parse the raw gzip bytes as text.
+        compression = "gzip" if filename.endswith(".gz") else None
         try:
-            return pd.read_csv(pd.io.common.BytesIO(resp.content), low_memory=False)
+            return pd.read_csv(pd.io.common.BytesIO(resp.content), low_memory=False, compression=compression)
         except Exception as exc:  # pandas raises many different error types
             raise ProviderError(f"Failed to parse CSV from {url}: {exc}") from exc
 
@@ -84,16 +90,17 @@ class NFLverseProvider(NFLDataProvider):
     def get_plays(self, season: int, week: Optional[int] = None) -> pd.DataFrame:
         # Play-by-play files are ~40-80MB per season compressed; fetch
         # lazily and only when actually needed (Phase 3+), not on every
-        # ingestion run.
-        df = self._fetch_csv("pbp", f"play_by_play_{season}.csv.gz")
+        # ingestion run. Longer timeout than the other (KB-sized) files.
+        df = self._fetch_csv("pbp", f"play_by_play_{season}.csv.gz", timeout=180)
         if week is not None:
             df = df[df["week"] == week]
 
         keep_cols = [
-            "play_id", "game_id", "qtr", "game_seconds_remaining", "down",
+            "play_id", "game_id", "season", "week", "qtr", "game_seconds_remaining", "down",
             "ydstogo", "yardline_100", "posteam", "defteam", "play_type",
             "yards_gained", "epa", "success", "pass_attempt", "rush_attempt",
-            "interception", "fumble_lost", "touchdown",
+            "interception", "fumble_lost", "touchdown", "sack", "qb_hit",
+            "first_down", "third_down_converted", "third_down_failed",
             "passer_player_id", "rusher_player_id", "receiver_player_id",
         ]
         available = [c for c in keep_cols if c in df.columns]

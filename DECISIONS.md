@@ -146,9 +146,68 @@ further action needed unless the fallback needs removing entirely.
 
 ---
 
+## 6. Rolling stats scope: two windows, offense-focused, per-play proxies
+
+**Status:** Decided and implemented (Phase 3 Slice B).
+
+**Problem:** Design doc §14 lists four candidate rolling windows
+(season-to-date, last 8/4/2 games) without mandating all of them, and
+§14's metric list (EPA/play, success rate, sack rate, pressure rate,
+explosive play rate, red-zone efficiency, third-down efficiency, ...)
+includes some metrics nflverse's play-by-play doesn't directly support
+without either extra complexity (true red-zone efficiency needs
+per-drive aggregation) or an outright missing field (no dedicated
+"pressure" flag).
+
+**Decision:**
+- **Two windows only:** `season_to_date` and `last_4`, not all four
+  candidates. Stored in long format in `gold.team_rolling_stats` (one
+  row per team/game/window) so adding a third window later is new rows,
+  not a schema change.
+- **Only `season_to_date` is promoted into `gold.game_features`**
+  (`home_off_epa`/`away_off_epa`/`home_def_epa`/`away_def_epa`) — `last_4`
+  stays in `gold.team_rolling_stats` for future model experimentation
+  rather than doubling every EPA column in the flat feature table
+  without a proven modeling need.
+- **Offense-focused:** every metric except `def_epa` is computed from a
+  team's own offensive plays. There's no full defensive breakdown
+  (defensive success rate, defensive sack rate, etc.) — just the one
+  defensive EPA-allowed summary number, matching what `gold.game_features`
+  actually needs per the design doc's §18 example.
+- **`pressure_rate` uses `qb_hit`** as a proxy — nflverse's public
+  play-by-play has no dedicated "pressure" flag.
+- **`red_zone_td_rate` is a per-play proxy** (TD rate on snaps run
+  inside the 20), not true per-drive red-zone efficiency (trips ending
+  in a TD / total red-zone trips). The latter needs drive-level
+  aggregation (nflverse does have a `drive` column, so this is
+  buildable later, just deferred).
+- **Explosive play thresholds:** 15+ yards on a pass, 10+ yards on a
+  run — the standard NFL analytics convention.
+- **Player-level features (design doc §15) are entirely out of scope**
+  here — `gold.team_rolling_stats` is team aggregates only. This is why
+  `home_qb_epa`/`away_qb_epa` from §18's example feature list aren't in
+  `gold.game_features` yet.
+
+**Also fixed during implementation:** `get_plays()` never actually
+worked before this slice — `_fetch_csv`'s `pd.read_csv` call had no
+`compression` argument, so it silently tried to parse the gzip-
+compressed play-by-play file as raw text (pandas infers compression
+from a file path's suffix, which a `BytesIO` payload doesn't have).
+Caught by running it against live data before building anything on top
+of it; fixed by passing `compression="gzip"` explicitly when the source
+filename ends in `.gz`.
+
+**Open follow-up:** Per-drive red-zone efficiency and a true pressure
+metric (if nflverse or a future provider ever exposes one) are natural
+additions once there's a concrete modeling need for them.
+
+---
+
 ## Revision history
 
 - 2026-09-07: Initial decisions recorded for all four open questions from
   the design doc review notes.
 - 2026-09-07: Added decision #5 (injury point-in-time cutoff fallback),
   found while implementing and live-testing Phase 3 Slice A.
+- 2026-09-07: Added decision #6 (rolling stats scope), recorded while
+  implementing Phase 3 Slice B.

@@ -15,8 +15,7 @@ This README tracks **implementation status** against that design.
 |---|---|---|
 | 1 | Data ingestion (provider → bronze) | ✅ **Working** — see below |
 | 2 | Bronze → Silver → Gold transforms | 🟡 **Silver working** — Gold moved into Phase 3 |
-| 3 | Point-in-time feature engineering | 🟡 **Slice A working** — Elo, injury impact, non-EPA `gold.game_features`; Slice B (play-by-play, rolling EPA stats) not started |
-| 4 | ML training (XGBoost baseline) | ⬜ Not started |
+| 3 | Point-in-time feature engineering | ✅ **Slices A + B working** — Elo, injury impact, rolling EPA stats, full `gold.game_features` (player features deferred) |
 | 4 | ML training (XGBoost baseline) | ⬜ Not started |
 | 5 | Walk-forward backtesting (2025) | ⬜ Not started |
 | 6 | Automation (GitHub Actions) | ⬜ Not started |
@@ -215,9 +214,10 @@ games), and `opening_spread`/`current_spread`/`spread_movement` (V1 has
 one odds snapshot, so movement is always 0 — see Decision #2).
 `temperature`/`wind` columns exist per the design doc's example feature
 set but stay NULL — no weather provider yet. EPA-based columns
-(`home_off_epa`, `home_qb_epa`, etc.) are not in the table at all yet —
-they don't exist as a concept until Slice B's play-by-play ingestion
-lands.
+(`home_off_epa`, `away_off_epa`, `home_def_epa`, `away_def_epa`) were
+added in Slice B, see below — `home_qb_epa`/`away_qb_epa` are still not
+in the table, since those are player-level (design doc §15), out of
+scope until a future player-features slice.
 
 **Point-in-time correctness (design doc §19) is the core guarantee
 here**, verified two ways: unit tests on the pure Elo/injury-impact
@@ -228,22 +228,74 @@ implementation: nflverse dropped injury report timestamps for 2025
 entirely (see Decision #5), which would have silently zeroed out every
 injury feature without the live check.
 
-**Deferred to Slice B:** play-by-play ingestion, `silver.plays`,
-rolling EPA/success-rate team stats, player-level features, and the
-remaining `gold.team_rolling_stats`/`player_rolling_stats` tables — all
-genuinely dependent on play-by-play data that isn't ingested yet.
-
 **Verified working end-to-end** against live 2025 Weeks 1-2 nflverse
 data: 32 teams, 32 games, 64 team-ratings rows, 64 injury-impact rows,
-32 `game_odds` rows, 32 `game_features` rows. 36/36 offline tests pass.
+32 `game_odds` rows, 32 `game_features` rows. 40/40 offline tests pass
+as of the bug-fix pass after this slice (see `DECISIONS.md` for what
+was found and fixed in a follow-up code review: NaN-into-INTEGER
+crashes, a tie-scoring bug, an injury data "Frankenstein row" bug, and
+a silent schema-migration gap).
+
+---
+
+## What's actually built right now (Phase 3 — Slice B)
+
+Play-by-play ingestion through rolling team stats — the EPA-dependent
+half of Phase 3 that Slice A deferred. See `DECISIONS.md` #6 for the
+full reasoning behind every scope choice below.
+
+```
+src/ingest/pipeline_metadata.py     Shared metadata.pipeline_runs bookkeeping (extracted from run_ingestion.py)
+src/ingest/run_pbp_ingestion.py     CLI entrypoint: provider → bronze.plays_raw (full season, bulk replace)
+schema/001_bronze.sql               bronze.plays_raw gained season/week/sack/qb_hit/first_down/third_down columns
+schema/004_silver_plays.sql         New silver.plays table
+src/transform/plays_transform.py    CLI entrypoint: bronze → silver.plays (bulk replace, not per-row upsert)
+schema/005_gold_rolling_stats.sql   New gold.team_rolling_stats table + game_features EPA columns
+src/features/rolling_stats.py       Point-in-time rolling stat computation (design doc §14)
+tests/test_rolling_stats.py         Unit tests: weighted averaging, window boundaries, season resets
+```
+
+**What's in `gold.team_rolling_stats`:** two windows (`season_to_date`,
+`last_4`) × 12 metrics per team per game — EPA/play, offensive EPA,
+defensive EPA (allowed), pass EPA, rush EPA, success rate, turnover
+rate, sack rate, pressure rate (a `qb_hit`-based proxy — nflverse has no
+dedicated pressure flag), explosive play rate, red-zone TD rate (a
+per-play proxy, not true per-drive efficiency), and third-down rate.
+Only `season_to_date` is promoted into `gold.game_features`
+(`home_off_epa`/`away_off_epa`/`home_def_epa`/`away_def_epa`) — `last_4`
+stays available in `gold.team_rolling_stats` for future experimentation.
+
+**A real, previously-undetected bug was caught here too:** `get_plays()`
+had never actually been run against live data before this slice (Phase 1's
+README flagged it as "implemented but not called yet"). It didn't work —
+`_fetch_csv`'s `pd.read_csv` had no `compression` argument, so it tried
+to parse the gzip-compressed play-by-play file as raw text and failed
+immediately with a `UnicodeDecodeError`. Caught by testing against real
+data before building anything on top of it, not by a unit test (offline
+tests can't catch a bug in *fetching* real data). Fixed by passing
+`compression="gzip"` when the source filename ends in `.gz`. See
+`DECISIONS.md` #6.
+
+**Verified working end-to-end** against live 2025 season data: 48,771
+play-by-play rows ingested and transformed, 128 `gold.team_rolling_stats`
+rows and full EPA columns in `gold.game_features` for Weeks 1-2, with
+Week 1 correctly showing NULL EPA (no prior games) and Week 2 showing
+real values reflecting each team's Week 1 performance. 51/51 offline
+tests pass (40 existing + 11 new).
+
+**Still deferred:** player-level features (design doc §15 — QB/WR/
+defensive player stats aggregated to team level), true per-drive
+red-zone efficiency, and weather data (no provider). None of these
+block Phase 4 (ML training), which can now start against a genuinely
+complete team-level feature table.
 
 ---
 
 ## Next steps
 
-**Slice B** (play-by-play ingestion → `silver.plays` → rolling EPA/
-success-rate team stats → player features) is the natural next step —
-it fills in the EPA-based columns the design doc's `gold.game_features`
-example expects (§18) and unlocks real team/player-quality signal
-beyond Elo. After that, Phase 4 (ML training) can start against a
-reasonably complete feature table.
+The feature table (`gold.game_features`) is now substantive enough to
+start **Phase 4**: an XGBoost baseline trained against it, with the
+model promotion criteria from `DECISIONS.md` #1 applied once a
+candidate exists to compare against. Player-level features and true
+per-drive red-zone efficiency remain natural follow-ups whenever a
+concrete modeling need justifies the added complexity.

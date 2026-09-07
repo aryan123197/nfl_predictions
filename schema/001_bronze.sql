@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS bronze.plays_raw (
     id                       BIGSERIAL PRIMARY KEY,
     play_id                  TEXT,
     game_id                  TEXT NOT NULL,
+    season                   INTEGER,
+    week                     INTEGER,
     qtr                      INTEGER,
     game_seconds_remaining   DOUBLE PRECISION,
     down                     DOUBLE PRECISION,
@@ -158,6 +160,11 @@ CREATE TABLE IF NOT EXISTS bronze.plays_raw (
     interception             DOUBLE PRECISION,
     fumble_lost              DOUBLE PRECISION,
     touchdown                DOUBLE PRECISION,
+    sack                     DOUBLE PRECISION,
+    qb_hit                   DOUBLE PRECISION,  -- used as a pressure-rate proxy -- nflverse has no dedicated "pressure" flag
+    first_down               DOUBLE PRECISION,
+    third_down_converted     DOUBLE PRECISION,
+    third_down_failed        DOUBLE PRECISION,
     passer_player_id         TEXT,
     rusher_player_id         TEXT,
     receiver_player_id       TEXT,
@@ -168,3 +175,25 @@ CREATE TABLE IF NOT EXISTS bronze.plays_raw (
 
 CREATE INDEX IF NOT EXISTS idx_plays_raw_game
     ON bronze.plays_raw (game_id);
+
+-- season/week/sack/qb_hit/first_down/third_down_converted/third_down_failed
+-- were added after this table may already exist in a previously
+-- initialized database -- CREATE TABLE IF NOT EXISTS above is a no-op
+-- there, so these columns are backfilled explicitly (same pattern as
+-- silver.games/silver.injuries in schema/002_silver.sql).
+ALTER TABLE bronze.plays_raw ADD COLUMN IF NOT EXISTS season INTEGER;
+ALTER TABLE bronze.plays_raw ADD COLUMN IF NOT EXISTS week INTEGER;
+ALTER TABLE bronze.plays_raw ADD COLUMN IF NOT EXISTS sack DOUBLE PRECISION;
+ALTER TABLE bronze.plays_raw ADD COLUMN IF NOT EXISTS qb_hit DOUBLE PRECISION;
+ALTER TABLE bronze.plays_raw ADD COLUMN IF NOT EXISTS first_down DOUBLE PRECISION;
+ALTER TABLE bronze.plays_raw ADD COLUMN IF NOT EXISTS third_down_converted DOUBLE PRECISION;
+ALTER TABLE bronze.plays_raw ADD COLUMN IF NOT EXISTS third_down_failed DOUBLE PRECISION;
+
+-- Idempotent-replace key: pbp ingestion deletes-then-reinserts a whole
+-- season at a time (see src/ingest/run_pbp_ingestion.py) rather than
+-- per-row upsert, since a season is ~45k+ rows -- a per-row SELECT-then-
+-- branch loop (the pattern games_raw/injuries_raw use) doesn't scale to
+-- that volume. This index exists for query performance and data-
+-- integrity, not for upsert logic.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_plays_raw_game_play_source
+    ON bronze.plays_raw (game_id, play_id, source);
