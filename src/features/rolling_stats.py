@@ -50,13 +50,19 @@ WINDOWS: dict[str, Optional[int]] = {"season_to_date": None, "last_4": 4}
 EXPLOSIVE_PASS_YARDS = 15
 EXPLOSIVE_RUSH_YARDS = 10
 
-_PER_GAME_COLUMNS = [
-    "team_id", "game_id", "plays", "epa_sum", "success_sum", "turnover_sum",
+_KEY_COLUMNS = ["team_id", "game_id"]
+# The two columns contributed by the defense-side groupby; everything else in
+# _PER_GAME_COLUMNS comes from the offense side. Derived (not hand-listed)
+# so the empty-DataFrame fallbacks below can't drift from the real schema
+# when a metric is added.
+_DEFENSE_COLUMNS = ["def_plays", "def_epa_sum"]
+_PER_GAME_COLUMNS = _KEY_COLUMNS + [
+    "plays", "epa_sum", "success_sum", "turnover_sum",
     "pass_plays", "pass_epa_sum", "rush_plays", "rush_epa_sum",
     "dropbacks", "sack_sum", "qb_hit_sum", "explosive_sum",
     "redzone_plays", "redzone_td_sum", "third_down_plays", "third_down_conversions",
-    "def_plays", "def_epa_sum",
-]
+] + _DEFENSE_COLUMNS
+_OFFENSE_COLUMNS = [c for c in _PER_GAME_COLUMNS if c not in _DEFENSE_COLUMNS]
 
 
 def compute_per_game_team_stats(plays: pd.DataFrame) -> pd.DataFrame:
@@ -113,20 +119,35 @@ def compute_per_game_team_stats(plays: pd.DataFrame) -> pd.DataFrame:
     defense = pd.DataFrame(defense_rows)
 
     if offense.empty:
-        offense = pd.DataFrame(columns=["team_id", "game_id", "plays", "epa_sum", "success_sum", "turnover_sum",
-                                         "pass_plays", "pass_epa_sum", "rush_plays", "rush_epa_sum",
-                                         "dropbacks", "sack_sum", "qb_hit_sum", "explosive_sum",
-                                         "redzone_plays", "redzone_td_sum", "third_down_plays",
-                                         "third_down_conversions"])
+        offense = pd.DataFrame(columns=_OFFENSE_COLUMNS)
     if defense.empty:
-        defense = pd.DataFrame(columns=["team_id", "game_id", "def_plays", "def_epa_sum"])
+        defense = pd.DataFrame(columns=_KEY_COLUMNS + _DEFENSE_COLUMNS)
 
     merged = offense.merge(defense, on=["team_id", "game_id"], how="outer")
     return merged
 
 
 def _sum_history(history: list[dict], field: str) -> float:
-    return sum((g.get(field) or 0) for g in history)
+    """Sum `field` across `history`, treating missing values as 0.
+
+    Must skip NaN explicitly, not just rely on `or 0`: NaN is truthy in
+    Python, so `g.get(field) or 0` passes it straight through, and NaN +
+    anything is NaN -- one bad game silently poisons that stat for every
+    later game in the window. NaN reaches here from the outer merge in
+    compute_per_game_team_stats() when a team appears on only one side of
+    the ball in a game (offense rows but no defense rows, or vice versa).
+    Verified against the full real 2025 season (570 team-games) that this
+    never happens with complete data -- a real game always has both teams
+    on offense and defense -- so this guards partial ingestion, a truncated
+    pbp file, or a forfeited game, not current production data.
+    """
+    total = 0.0
+    for game in history:
+        value = game.get(field)
+        if value is None or not pd.notna(value):
+            continue
+        total += value
+    return total
 
 
 def _rate(numerator: float, denominator: float) -> Optional[float]:

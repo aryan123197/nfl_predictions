@@ -280,8 +280,31 @@ tests can't catch a bug in *fetching* real data). Fixed by passing
 play-by-play rows ingested and transformed, 128 `gold.team_rolling_stats`
 rows and full EPA columns in `gold.game_features` for Weeks 1-2, with
 Week 1 correctly showing NULL EPA (no prior games) and Week 2 showing
-real values reflecting each team's Week 1 performance. 51/51 offline
-tests pass (40 existing + 11 new).
+real values reflecting each team's Week 1 performance. 52/52 offline
+tests pass (40 existing + 11 new, plus 1 from the follow-up code-review
+fix pass below).
+
+**Fixed in a follow-up code review of this slice** (all three verified
+against the real 2025 season before and after, and all three latent
+rather than actively firing — see the commit message for the full
+reasoning):
+- `rolling_stats._sum_history` used `value or 0`, which does *not* fall
+  back for `NaN` (NaN is truthy). A team appearing on only one side of
+  the ball in a game gets NaN from the offense/defense outer merge, and
+  since NaN + anything is NaN, one such game would silently poison that
+  stat for every *later* game in the window. Confirmed this never occurs
+  across all 570 real 2025 team-games — a complete NFL game always has
+  both teams on offense and defense — so it guards partial ingestion, a
+  truncated pbp file, or a forfeit, not current data.
+- `run_pbp_ingestion._replace_plays` bulk-wrote `bronze.plays_raw`'s
+  INTEGER `season`/`week`/`qtr` columns without the NaN→NULL coercion
+  applied everywhere else in this slice — the same failure class the
+  Slice A review fixed via `_int_or_none`, missed on the newer `to_sql`
+  path (SQLite coerces NaN silently, Postgres rejects it).
+- The empty-DataFrame fallback column lists in
+  `compute_per_game_team_stats` were hand-duplicated from
+  `_PER_GAME_COLUMNS` and could drift from it whenever a metric is
+  added; they're now derived from it.
 
 **Still deferred:** player-level features (design doc §15 — QB/WR/
 defensive player stats aggregated to team level), true per-drive

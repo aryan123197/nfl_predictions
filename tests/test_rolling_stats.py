@@ -169,6 +169,38 @@ def test_last_4_window_drops_games_older_than_four():
     assert g6_std["off_epa"] > 0  # but it's still in season-to-date
 
 
+def test_one_sided_game_does_not_nan_poison_later_windows():
+    # A team that appears on only one side of the ball in a game gets NaN
+    # from the offense/defense outer merge. NaN is truthy, so a plain
+    # `value or 0` fallback lets it through, and NaN + anything is NaN --
+    # one such game would zero out that stat for every LATER game too.
+    # Doesn't occur in complete real data (verified across the full 2025
+    # season), but partial ingestion or a truncated pbp file would trigger it.
+    plays = pd.DataFrame([
+        # g1: only A runs plays, so A has offense rows but NO defense rows
+        _play("g1", "A", "B", epa=1.0, pass_attempt=True),
+        # g2: both teams run plays -- A has offense and defense rows
+        _play("g2", "A", "C", epa=2.0, pass_attempt=True),
+        _play("g2", "C", "A", epa=4.0, pass_attempt=True),
+    ])
+    per_game = compute_per_game_team_stats(plays)
+    a_g1 = per_game[(per_game["team_id"] == "A") & (per_game["game_id"] == "g1")].iloc[0]
+    assert pd.isna(a_g1["def_epa_sum"])  # the NaN this test exists to guard against
+
+    team_games = pd.DataFrame([
+        _team_game("A", "g1", 2025, 1),
+        _team_game("A", "g2", 2025, 2),
+        _team_game("A", "g3", 2025, 3),
+    ])
+    rolling = compute_rolling_stats(per_game, team_games)
+    g3_row = rolling[(rolling["window"] == "season_to_date") & (rolling["game_id"] == "g3")].iloc[0]
+
+    # g1's NaN must be skipped, not summed: def_epa comes from g2 alone.
+    assert g3_row["def_epa"] == pytest.approx(4.0)
+    # ...and the offensive side, which had no NaN at all, stays correct.
+    assert g3_row["off_epa"] == pytest.approx(1.5)  # (1.0 + 2.0) / 2 plays
+
+
 def test_history_resets_at_season_boundary():
     plays = pd.DataFrame([_play("g1", "A", "B", epa=10.0, pass_attempt=True)])
     per_game = compute_per_game_team_stats(plays)
