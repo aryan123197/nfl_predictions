@@ -1,0 +1,10 @@
+# Phase 9 (application) API dependencies.
+#
+# Kept separate from requirements.txt so the API can be installed and
+# deployed without the pipeline/ML stack, and so this file doesn't collide
+# with the ML dependencies Phase 4 will add to requirements.txt.
+# Install alongside the base requirements:
+#     pip install -r requirements.txt -r requirements-api.txt
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27        # required by fastapi.testclient

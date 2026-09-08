@@ -21,7 +21,7 @@ This README tracks **implementation status** against that design.
 | 6 | Automation (GitHub Actions) | 🟡 **CI only** — test workflows running; pipeline scheduling not started |
 | 7 | Live 2026 data connection | ⬜ Not started |
 | 8 | MLOps (MLflow, model registry, monitoring) | ⬜ Not started |
-| 9 | Application (FastAPI + React) | ⬜ Not started |
+| 9 | Application (FastAPI + React) | 🟡 **Slice A working** — read-only API + React UI over silver/gold; prediction panel wired but empty until Phase 4 |
 | 10 | Advanced learning (online/RL) | ⬜ Not started (explicit non-goal for V1) |
 
 ---
@@ -345,63 +345,56 @@ still ahead, and needs Phase 4 to exist first.
 
 ---
 
-## What's actually built right now (Phase 4 — win probability)
+## What's actually built right now
 
+### Phase 4 — Win probability baseline
 Features → XGBoost → Predictions (design doc §24), scoped to win
-probability only — see `DECISIONS.md` #7 for the full reasoning behind
-every choice below, including two real bugs found by backfilling and
-training against real multi-season data rather than synthetic fixtures.
+probability only — see `DECISIONS.md` #7 for details.
 
 ```
 schema/006_ml.sql                     ml.predictions (insert-only) + ml.game_results
 src/transform/game_results_transform.py   silver.games -> ml.game_results (actual outcomes, ATS cover)
 src/ml/features.py                    FEATURE_COLUMNS (explicit, versioned) + training-frame loader
 src/ml/train.py                       CLI entrypoint: train, evaluate, save model, write predictions
-scripts/backfill_seasons.py           Extended to run the FULL pipeline (was bronze-only) across a season range
+scripts/backfill_seasons.py           Extended to run the FULL pipeline across a season range
 tests/test_ml_train.py                Split logic + full-pipeline integration tests (in-memory SQLite)
 ```
 
 **Usage:**
 ```bash
-# One-time: populate enough history to train on (this now also runs
-# play-by-play + silver + gold, not just bronze ingestion)
+# Populate multi-season history
 python scripts/backfill_seasons.py --start 2020 --end 2025
 
-# Train, evaluate on the most recent season, write predictions
+# Train, evaluate on holdout season, write predictions
 python -m src.ml.train
-python -m src.ml.train --holdout-season 2025   # explicit holdout
 ```
 
-**Scope:** win probability only (`home_win_probability`/
-`away_win_probability`) — score and margin prediction columns exist on
-`ml.predictions` per the design doc's schema but stay NULL until a
-follow-up slice. One train/holdout split (season-based, or a
-within-season week split if only one season exists) — not yet the
-week-by-week walk-forward retraining loop, which is Phase 5's job,
-built on this same training code. Model versioning is a plain
-`models/<version>/metadata.json` (training data, features,
-hyperparameters, metrics, git commit), not MLflow — that's Phase 8.
+### Phase 9 — Slice A: Read-only API + React UI
+A read-only FastAPI service over silver/gold and a React UI on top of it —
+design doc §34 (architecture), §35 (prediction UI).
 
-**Verified working end-to-end** against real backfilled 2022-2025
-season data (1,139 games): trained on 852 games, evaluated on the 2025
-season holdout (284 games) — 64.1% accuracy, 0.665 log loss, 0.230
-Brier score, all sane for a first, untuned baseline (not suspiciously
-good, which would suggest point-in-time leakage). Re-verified after
-fixing the bugs below. 59/59 offline tests pass (52 existing + 7 new).
+```
+requirements-api.txt              API-only dependencies
+src/api/main.py                   FastAPI app: the §34 endpoints
+src/api/queries.py                Read-only SQL over silver + gold
+src/api/schemas.py                Pydantic response models
+src/api/predictions.py            The Phase 4 boundary
+tests/test_api.py                 16 offline API tests against SQLite
+frontend/                         Vite + React + TypeScript
+  src/components/WeekView.tsx     Season/week pickers + game grid
+  src/components/GameDetail.tsx   §35 game page
+  src/components/PredictionPanel.tsx  Win probability, predicted score, model vs market
+  src/components/FeatureComparison.tsx  Head-to-head gold.game_features
+  src/components/format.test.ts   14 unit tests
+```
 
-**Two real bugs found by backfilling and training against real
-multi-season data** (both invisible to 2025-only testing, and to
-synthetic-fixture unit tests):
-- A timezone comparison crash in the injury-impact cutoff:
-  pre-2025 seasons have real, tz-aware `reported_at` timestamps (2025
-  dropped that field entirely, per Decision #5), and comparing those
-  against a tz-naive `game_date` raised `TypeError`. Never exercised by
-  2025-only data, where `reported_at` was always NULL.
-  Fixed by normalizing both to naive UTC.
-- An all-NULL feature column (e.g. `home_off_epa` in a small synthetic
-  test with no play-by-play) comes back from SQL as pandas `object`
-  dtype, not `float64` — XGBoost rejects `object` dtype outright. Fixed
-  with an explicit cast in `split_features_target`.
+### Running the API & Frontend
+```bash
+pip install -r requirements.txt -r requirements-api.txt
+uvicorn src.api.main:app --reload      # http://127.0.0.1:8000/docs
+
+cd frontend && npm install && npm run dev   # http://127.0.0.1:5173
+```
 
 ---
 
