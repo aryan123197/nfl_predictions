@@ -98,7 +98,7 @@ SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql", "003_gold.sql",
                 "007_gold_player_stats.sql"]
 
 
-def init_schema() -> None:
+def init_schema(force: bool = False) -> None:
     """Create all bronze + silver + metadata tables for the active database.
 
     For Postgres, this executes the schema/*.sql files directly, in
@@ -106,6 +106,18 @@ def init_schema() -> None:
     version with schemas flattened and Postgres-only types swapped out,
     so `python -m src.ingest.run_ingestion` works with zero setup.
     """
+    engine = get_engine()
+    if not force and engine.dialect.name != "sqlite":
+        try:
+            with engine.connect() as conn:
+                res = conn.execute(
+                    text("SELECT 1 FROM information_schema.tables WHERE table_schema = 'ml' AND table_name = 'predictions'")
+                ).fetchone()
+                if res:
+                    return
+        except Exception:
+            pass
+
     for filename in SCHEMA_FILES:
         apply_ddl_file(filename)
 
