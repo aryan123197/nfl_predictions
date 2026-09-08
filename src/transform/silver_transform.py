@@ -90,161 +90,258 @@ def _upsert_games(engine: Engine, games: pd.DataFrame) -> int:
     if games.empty:
         return 0
     table = qualified_table("silver", "games")
-    count = 0
+    is_postgres = engine.dialect.name != "sqlite"
+    records = []
+    for _, row in games.iterrows():
+        records.append({
+            "game_id": row["game_id"],
+            "season": int(row["season"]),
+            "week": int(row["week"]) if pd.notna(row.get("week")) else None,
+            "game_date": row.get("gameday"),
+            "home_team_id": canonical_team_id(row.get("home_team")),
+            "away_team_id": canonical_team_id(row.get("away_team")),
+            "home_score": int(row["home_score"]) if pd.notna(row.get("home_score")) else None,
+            "away_score": int(row["away_score"]) if pd.notna(row.get("away_score")) else None,
+            "home_rest_days": int(row["home_rest"]) if pd.notna(row.get("home_rest")) else None,
+            "away_rest_days": int(row["away_rest"]) if pd.notna(row.get("away_rest")) else None,
+            "status": _game_status(row),
+        })
+
     with engine.begin() as conn:
-        for _, row in games.iterrows():
-            payload = {
-                "game_id": row["game_id"],
-                "season": int(row["season"]),
-                "week": int(row["week"]) if pd.notna(row.get("week")) else None,
-                "game_date": row.get("gameday"),
-                "home_team_id": canonical_team_id(row.get("home_team")),
-                "away_team_id": canonical_team_id(row.get("away_team")),
-                "home_score": int(row["home_score"]) if pd.notna(row.get("home_score")) else None,
-                "away_score": int(row["away_score"]) if pd.notna(row.get("away_score")) else None,
-                "home_rest_days": int(row["home_rest"]) if pd.notna(row.get("home_rest")) else None,
-                "away_rest_days": int(row["away_rest"]) if pd.notna(row.get("away_rest")) else None,
-                "status": _game_status(row),
-            }
-            existing = conn.execute(
-                text(f"SELECT game_id FROM {table} WHERE game_id = :game_id"),
-                {"game_id": payload["game_id"]},
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    text(f"UPDATE {table} SET season=:season, week=:week, game_date=:game_date, "
-                         f"home_team_id=:home_team_id, away_team_id=:away_team_id, "
-                         f"home_score=:home_score, away_score=:away_score, "
-                         f"home_rest_days=:home_rest_days, away_rest_days=:away_rest_days, status=:status "
-                         f"WHERE game_id=:game_id"),
-                    payload,
-                )
-            else:
-                conn.execute(
-                    text(f"INSERT INTO {table} (game_id, season, week, game_date, home_team_id, "
-                         f"away_team_id, home_score, away_score, home_rest_days, away_rest_days, status) "
-                         f"VALUES (:game_id, :season, :week, :game_date, :home_team_id, "
-                         f":away_team_id, :home_score, :away_score, :home_rest_days, :away_rest_days, :status)"),
-                    payload,
-                )
-            count += 1
-    return count
+        if is_postgres:
+            sql = f"""
+            INSERT INTO {table} (game_id, season, week, game_date, home_team_id, away_team_id,
+                                 home_score, away_score, home_rest_days, away_rest_days, status)
+            VALUES (:game_id, :season, :week, :game_date, :home_team_id, :away_team_id,
+                    :home_score, :away_score, :home_rest_days, :away_rest_days, :status)
+            ON CONFLICT (game_id) DO UPDATE SET
+                season = EXCLUDED.season,
+                week = EXCLUDED.week,
+                game_date = EXCLUDED.game_date,
+                home_team_id = EXCLUDED.home_team_id,
+                away_team_id = EXCLUDED.away_team_id,
+                home_score = EXCLUDED.home_score,
+                away_score = EXCLUDED.away_score,
+                home_rest_days = EXCLUDED.home_rest_days,
+                away_rest_days = EXCLUDED.away_rest_days,
+                status = EXCLUDED.status,
+                updated_at = now()
+            """
+            conn.execute(text(sql), records)
+        else:
+            for payload in records:
+                existing = conn.execute(
+                    text(f"SELECT game_id FROM {table} WHERE game_id = :game_id"),
+                    {"game_id": payload["game_id"]},
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        text(f"UPDATE {table} SET season=:season, week=:week, game_date=:game_date, "
+                             f"home_team_id=:home_team_id, away_team_id=:away_team_id, "
+                             f"home_score=:home_score, away_score=:away_score, "
+                             f"home_rest_days=:home_rest_days, away_rest_days=:away_rest_days, status=:status "
+                             f"WHERE game_id=:game_id"),
+                        payload,
+                    )
+                else:
+                    conn.execute(
+                        text(f"INSERT INTO {table} (game_id, season, week, game_date, home_team_id, "
+                             f"away_team_id, home_score, away_score, home_rest_days, away_rest_days, status) "
+                             f"VALUES (:game_id, :season, :week, :game_date, :home_team_id, "
+                             f":away_team_id, :home_score, :away_score, :home_rest_days, :away_rest_days, :status)"),
+                        payload,
+                    )
+    return len(records)
 
 
 def _upsert_odds(engine: Engine, games: pd.DataFrame, source: str) -> int:
     if games.empty:
         return 0
     table = qualified_table("silver", "odds")
-    sportsbook = "consensus"  # nflverse carries one consensus closing line, not per-book (see DECISIONS.md #2)
-    count = 0
+    sportsbook = "consensus"
+    is_postgres = engine.dialect.name != "sqlite"
+    records = []
+    for _, row in games.iterrows():
+        records.append({
+            "game_id": row["game_id"],
+            "sportsbook": sportsbook,
+            "source": source,
+            "spread": float(row["spread_line"]) if pd.notna(row.get("spread_line")) else None,
+            "moneyline_home": float(row["home_moneyline"]) if pd.notna(row.get("home_moneyline")) else None,
+            "moneyline_away": float(row["away_moneyline"]) if pd.notna(row.get("away_moneyline")) else None,
+            "total": float(row["total_line"]) if pd.notna(row.get("total_line")) else None,
+        })
+
     with engine.begin() as conn:
-        for _, row in games.iterrows():
-            payload = {
-                "game_id": row["game_id"],
-                "sportsbook": sportsbook,
-                "source": source,
-                "spread": float(row["spread_line"]) if pd.notna(row.get("spread_line")) else None,
-                "moneyline_home": float(row["home_moneyline"]) if pd.notna(row.get("home_moneyline")) else None,
-                "moneyline_away": float(row["away_moneyline"]) if pd.notna(row.get("away_moneyline")) else None,
-                "total": float(row["total_line"]) if pd.notna(row.get("total_line")) else None,
-            }
-            existing = conn.execute(
-                text(f"SELECT odds_id FROM {table} WHERE game_id=:game_id AND sportsbook=:sportsbook "
-                     f"AND source=:source"),
-                payload,
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    text(f"UPDATE {table} SET spread=:spread, moneyline_home=:moneyline_home, "
-                         f"moneyline_away=:moneyline_away, total=:total "
-                         f"WHERE game_id=:game_id AND sportsbook=:sportsbook AND source=:source"),
+        if is_postgres:
+            sql = f"""
+            INSERT INTO {table} (game_id, sportsbook, source, spread, moneyline_home, moneyline_away, total)
+            VALUES (:game_id, :sportsbook, :source, :spread, :moneyline_home, :moneyline_away, :total)
+            ON CONFLICT (game_id, sportsbook, source) DO UPDATE SET
+                spread = EXCLUDED.spread,
+                moneyline_home = EXCLUDED.moneyline_home,
+                moneyline_away = EXCLUDED.moneyline_away,
+                total = EXCLUDED.total
+            """
+            conn.execute(text(sql), records)
+        else:
+            for payload in records:
+                existing = conn.execute(
+                    text(f"SELECT odds_id FROM {table} WHERE game_id=:game_id AND sportsbook=:sportsbook "
+                         f"AND source=:source"),
                     payload,
-                )
-            else:
-                conn.execute(
-                    text(f"INSERT INTO {table} (game_id, sportsbook, source, spread, "
-                         f"moneyline_home, moneyline_away, total) "
-                         f"VALUES (:game_id, :sportsbook, :source, :spread, "
-                         f":moneyline_home, :moneyline_away, :total)"),
-                    payload,
-                )
-            count += 1
-    return count
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        text(f"UPDATE {table} SET spread=:spread, moneyline_home=:moneyline_home, "
+                             f"moneyline_away=:moneyline_away, total=:total "
+                             f"WHERE game_id=:game_id AND sportsbook=:sportsbook AND source=:source"),
+                        payload,
+                    )
+                else:
+                    conn.execute(
+                        text(f"INSERT INTO {table} (game_id, sportsbook, source, spread, "
+                             f"moneyline_home, moneyline_away, total) "
+                             f"VALUES (:game_id, :sportsbook, :source, :spread, "
+                             f":moneyline_home, :moneyline_away, :total)"),
+                        payload,
+                    )
+    return len(records)
 
 
 def _upsert_players(engine: Engine, players: pd.DataFrame) -> int:
     if players.empty:
         return 0
     table = qualified_table("silver", "players")
-    count = 0
+    is_postgres = engine.dialect.name != "sqlite"
+
+    data = []
+    records = []
+    for _, row in players.iterrows():
+        t_id = canonical_team_id(row.get("team"))
+        p_name = str(row["full_name"]) if pd.notna(row.get("full_name")) else None
+        p_pos = str(row["position"]) if pd.notna(row.get("position")) else None
+        p_status = str(row["status"]) if pd.notna(row.get("status")) else None
+        p_id = str(row["player_id"])
+
+        data.append((p_id, p_name, p_pos, t_id, p_status))
+        records.append({
+            "player_id": p_id,
+            "name": p_name,
+            "position": p_pos,
+            "team_id": t_id,
+            "status": p_status,
+        })
+
     with engine.begin() as conn:
-        for _, row in players.iterrows():
-            payload = {
-                "player_id": row["player_id"],
-                "name": row.get("full_name"),
-                "position": row.get("position"),
-                "team_id": canonical_team_id(row.get("team")),
-                "status": row.get("status"),
-            }
-            existing = conn.execute(
-                text(f"SELECT player_id FROM {table} WHERE player_id = :player_id"),
-                {"player_id": payload["player_id"]},
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    text(f"UPDATE {table} SET name=:name, position=:position, team_id=:team_id, "
-                         f"status=:status WHERE player_id=:player_id"),
-                    payload,
-                )
-            else:
-                conn.execute(
-                    text(f"INSERT INTO {table} (player_id, name, position, team_id, status) "
-                         f"VALUES (:player_id, :name, :position, :team_id, :status)"),
-                    payload,
-                )
-            count += 1
-    return count
+        if is_postgres:
+            from psycopg2.extras import execute_values
+            raw_conn = conn.connection.dbapi_connection
+            cur = raw_conn.cursor()
+            sql = f"""
+            INSERT INTO {table} (player_id, name, position, team_id, status)
+            VALUES %s
+            ON CONFLICT (player_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                position = EXCLUDED.position,
+                team_id = EXCLUDED.team_id,
+                status = EXCLUDED.status,
+                updated_at = now()
+            """
+            execute_values(cur, sql, data, page_size=2000)
+        else:
+            for payload in records:
+                existing = conn.execute(
+                    text(f"SELECT player_id FROM {table} WHERE player_id = :player_id"),
+                    {"player_id": payload["player_id"]},
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        text(f"UPDATE {table} SET name=:name, position=:position, team_id=:team_id, "
+                             f"status=:status WHERE player_id=:player_id"),
+                        payload,
+                    )
+                else:
+                    conn.execute(
+                        text(f"INSERT INTO {table} (player_id, name, position, team_id, status) "
+                             f"VALUES (:player_id, :name, :position, :team_id, :status)"),
+                        payload,
+                    )
+    return len(data)
 
 
 def _upsert_injuries(engine: Engine, injuries: pd.DataFrame, source: str) -> int:
     if injuries.empty:
         return 0
     table = qualified_table("silver", "injuries")
-    count = 0
+    is_postgres = engine.dialect.name != "sqlite"
+
+    data = []
+    records = []
+    for _, row in injuries.iterrows():
+        b_id = int(row["id"])
+        p_id = str(row["player_id"]) if pd.notna(row.get("player_id")) else None
+        t_id = canonical_team_id(row.get("team"))
+        s_val = int(row["season"]) if pd.notna(row.get("season")) else None
+        w_val = int(row["week"]) if pd.notna(row.get("week")) else None
+        st_val = str(row["report_status"]) if pd.notna(row.get("report_status")) else None
+        inj_type = str(row["report_primary_injury"]) if pd.notna(row.get("report_primary_injury")) else None
+        rep_at = str(row["date_modified"]) if pd.notna(row.get("date_modified")) else None
+
+        data.append((b_id, p_id, t_id, s_val, w_val, st_val, inj_type, rep_at, source))
+        records.append({
+            "bronze_id": b_id,
+            "player_id": p_id,
+            "team_id": t_id,
+            "season": s_val,
+            "week": w_val,
+            "status": st_val,
+            "injury_type": inj_type,
+            "reported_at": rep_at,
+            "source": source,
+        })
+
     with engine.begin() as conn:
-        for _, row in injuries.iterrows():
-            payload = {
-                "bronze_id": int(row["id"]),
-                "player_id": row.get("player_id"),
-                "team_id": canonical_team_id(row.get("team")),
-                "season": int(row["season"]) if pd.notna(row.get("season")) else None,
-                "week": int(row["week"]) if pd.notna(row.get("week")) else None,
-                "status": row.get("report_status"),
-                "injury_type": row.get("report_primary_injury"),
-                "reported_at": row.get("date_modified"),
-                "source": source,
-            }
-            existing = conn.execute(
-                text(f"SELECT injury_id FROM {table} WHERE bronze_id = :bronze_id"),
-                {"bronze_id": payload["bronze_id"]},
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    text(f"UPDATE {table} SET player_id=:player_id, team_id=:team_id, season=:season, "
-                         f"week=:week, status=:status, injury_type=:injury_type, reported_at=:reported_at, "
-                         f"source=:source WHERE bronze_id=:bronze_id"),
-                    payload,
-                )
-            else:
-                conn.execute(
-                    text(f"INSERT INTO {table} (bronze_id, player_id, team_id, season, week, status, "
-                         f"injury_type, reported_at, source) "
-                         f"VALUES (:bronze_id, :player_id, :team_id, :season, :week, :status, :injury_type, "
-                         f":reported_at, :source)"),
-                    payload,
-                )
-            count += 1
-    return count
+        if is_postgres:
+            from psycopg2.extras import execute_values
+            raw_conn = conn.connection.dbapi_connection
+            cur = raw_conn.cursor()
+            sql = f"""
+            INSERT INTO {table} (bronze_id, player_id, team_id, season, week, status, injury_type, reported_at, source)
+            VALUES %s
+            ON CONFLICT (bronze_id) DO UPDATE SET
+                player_id = EXCLUDED.player_id,
+                team_id = EXCLUDED.team_id,
+                season = EXCLUDED.season,
+                week = EXCLUDED.week,
+                status = EXCLUDED.status,
+                injury_type = EXCLUDED.injury_type,
+                reported_at = EXCLUDED.reported_at,
+                source = EXCLUDED.source
+            """
+            execute_values(cur, sql, data, page_size=2000)
+        else:
+            for payload in records:
+                existing = conn.execute(
+                    text(f"SELECT injury_id FROM {table} WHERE bronze_id = :bronze_id"),
+                    {"bronze_id": payload["bronze_id"]},
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        text(f"UPDATE {table} SET player_id=:player_id, team_id=:team_id, season=:season, "
+                             f"week=:week, status=:status, injury_type=:injury_type, reported_at=:reported_at, "
+                             f"source=:source WHERE bronze_id=:bronze_id"),
+                        payload,
+                    )
+                else:
+                    conn.execute(
+                        text(f"INSERT INTO {table} (bronze_id, player_id, team_id, season, week, status, "
+                             f"injury_type, reported_at, source) "
+                             f"VALUES (:bronze_id, :player_id, :team_id, :season, :week, :status, :injury_type, "
+                             f":reported_at, :source)"),
+                        payload,
+                    )
+    return len(data)
 
 
 def run(season: int, week: Optional[int] = None) -> dict[str, int]:
