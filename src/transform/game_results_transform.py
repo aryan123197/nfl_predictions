@@ -88,15 +88,25 @@ def run() -> int:
     results = _compute_results(games, odds)
 
     table = qualified_table("ml", "game_results")
+    is_postgres = engine.dialect.name != "sqlite"
     with engine.begin() as conn:
         conn.execute(text(f"DELETE FROM {table}"))
         if not results.empty:
             results = results.where(pd.notna(results), None)
             cols = list(results.columns)
-            placeholders = ", ".join(f":{c}" for c in cols)
-            col_list = ", ".join(cols)
-            conn.execute(text(f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"),
-                         results.to_dict(orient="records"))
+            if is_postgres:
+                from psycopg2.extras import execute_values
+                raw_conn = conn.connection.dbapi_connection
+                cur = raw_conn.cursor()
+                col_list = ", ".join(f'"{c}"' for c in cols)
+                sql = f"INSERT INTO {table} ({col_list}) VALUES %s"
+                data = [tuple(r[c] for c in cols) for r in results.to_dict(orient="records")]
+                execute_values(cur, sql, data, page_size=2000)
+            else:
+                placeholders = ", ".join(f":{c}" for c in cols)
+                col_list = ", ".join(cols)
+                conn.execute(text(f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"),
+                             results.to_dict(orient="records"))
     logger.info("Rebuilt ml.game_results: %d rows", len(results))
     return len(results)
 

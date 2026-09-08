@@ -245,9 +245,18 @@ def predict_upcoming_games(
 
     with engine.begin() as conn:
         cols = list(rows[0].keys())
-        placeholders = ", ".join(f":{c}" for c in cols)
-        col_list = ", ".join(cols)
-        conn.execute(text(f"INSERT INTO {pred_table} ({col_list}) VALUES ({placeholders})"), rows)
+        if engine.dialect.name != "sqlite":
+            from psycopg2.extras import execute_values
+            raw_conn = conn.connection.dbapi_connection
+            cur = raw_conn.cursor()
+            col_list = ", ".join(f'"{c}"' for c in cols)
+            sql = f"INSERT INTO {pred_table} ({col_list}) VALUES %s"
+            data = [tuple(r[c] for c in cols) for r in rows]
+            execute_values(cur, sql, data, page_size=2000)
+        else:
+            placeholders = ", ".join(f":{c}" for c in cols)
+            col_list = ", ".join(cols)
+            conn.execute(text(f"INSERT INTO {pred_table} ({col_list}) VALUES ({placeholders})"), rows)
 
     logger.info("Wrote %d predictions to ml.predictions under version %s", len(rows), model_version)
     return len(rows)

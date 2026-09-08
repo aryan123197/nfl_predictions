@@ -79,24 +79,27 @@ def _replace_table(engine: Engine, schema: str, table: str, df: pd.DataFrame) ->
     """Delete all rows and bulk-insert `df`. Simplest correct way to keep
     a fully-recomputed gold table in sync with its inputs each run."""
     qualified = qualified_table(schema, table)
+    is_postgres = engine.dialect.name != "sqlite"
     with engine.begin() as conn:
         conn.execute(text(f"DELETE FROM {qualified}"))
         if df.empty:
             return 0
-        # Belt-and-suspenders on top of the targeted _int_or_none() calls:
-        # a column that legitimately mixes None with floats (e.g. a
-        # rolling-stat column that's NULL for a team's first game of the
-        # season) gets silently coerced to NaN by pandas at DataFrame
-        # construction -- Postgres accepts NaN into a DOUBLE PRECISION
-        # column without error (unlike INTEGER), but it round-trips as a
-        # real NaN value, not SQL NULL, which breaks `WHERE col IS NULL`
-        # for anything querying these tables directly.
         df = df.where(pd.notna(df), None)
         cols = list(df.columns)
-        placeholders = ", ".join(f":{c}" for c in cols)
-        col_list = ", ".join(cols)
-        records = df.to_dict(orient="records")
-        conn.execute(text(f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders})"), records)
+        if is_postgres:
+            from psycopg2.extras import execute_values
+            raw_conn = conn.connection.dbapi_connection
+            cur = raw_conn.cursor()
+            col_list = ", ".join(f'"{c}"' for c in cols)
+            sql = f"INSERT INTO {qualified} ({col_list}) VALUES %s"
+            data = [tuple(r[c] for c in cols) for r in df.to_dict(orient="records")]
+            execute_values(cur, sql, data, page_size=2000)
+        else:
+            cols = list(df.columns)
+            placeholders = ", ".join(f":{c}" for c in cols)
+            col_list = ", ".join(f'"{c}"' if c == "window" else c for c in cols)
+            records = df.to_dict(orient="records")
+            conn.execute(text(f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders})"), records)
     return len(df)
 
 
