@@ -81,20 +81,24 @@ def _replace_table(engine: Engine, schema: str, table: str, df: pd.DataFrame) ->
     qualified = qualified_table(schema, table)
     is_postgres = engine.dialect.name != "sqlite"
     with engine.begin() as conn:
-        conn.execute(text(f"DELETE FROM {qualified}"))
-        if df.empty:
-            return 0
-        df = df.where(pd.notna(df), None)
-        cols = list(df.columns)
         if is_postgres:
             from psycopg2.extras import execute_values
             raw_conn = conn.connection.dbapi_connection
             cur = raw_conn.cursor()
+            cur.execute(f"DELETE FROM {qualified}")
+            if df.empty:
+                return 0
+            df = df.where(pd.notna(df), None)
+            cols = list(df.columns)
             col_list = ", ".join(f'"{c}"' for c in cols)
             sql = f"INSERT INTO {qualified} ({col_list}) VALUES %s"
             data = [tuple(r[c] for c in cols) for r in df.to_dict(orient="records")]
             execute_values(cur, sql, data, page_size=2000)
         else:
+            conn.execute(text(f"DELETE FROM {qualified}"))
+            if df.empty:
+                return 0
+            df = df.where(pd.notna(df), None)
             cols = list(df.columns)
             placeholders = ", ".join(f":{c}" for c in cols)
             col_list = ", ".join(f'"{c}"' if c == "window" else c for c in cols)
