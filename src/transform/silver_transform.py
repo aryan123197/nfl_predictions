@@ -91,29 +91,48 @@ def _upsert_games(engine: Engine, games: pd.DataFrame) -> int:
         return 0
     table = qualified_table("silver", "games")
     is_postgres = engine.dialect.name != "sqlite"
+
+    games = games.drop_duplicates(subset=["game_id"], keep="last")
+
     records = []
+    data = []
     for _, row in games.iterrows():
+        g_id = str(row["game_id"])
+        s_val = int(row["season"])
+        w_val = int(row["week"]) if pd.notna(row.get("week")) else None
+        g_date = row.get("gameday")
+        h_team = canonical_team_id(row.get("home_team"))
+        a_team = canonical_team_id(row.get("away_team"))
+        h_score = int(row["home_score"]) if pd.notna(row.get("home_score")) else None
+        a_score = int(row["away_score"]) if pd.notna(row.get("away_score")) else None
+        h_rest = int(row["home_rest"]) if pd.notna(row.get("home_rest")) else None
+        a_rest = int(row["away_rest"]) if pd.notna(row.get("away_rest")) else None
+        st = _game_status(row)
+
+        data.append((g_id, s_val, w_val, g_date, h_team, a_team, h_score, a_score, h_rest, a_rest, st))
         records.append({
-            "game_id": row["game_id"],
-            "season": int(row["season"]),
-            "week": int(row["week"]) if pd.notna(row.get("week")) else None,
-            "game_date": row.get("gameday"),
-            "home_team_id": canonical_team_id(row.get("home_team")),
-            "away_team_id": canonical_team_id(row.get("away_team")),
-            "home_score": int(row["home_score"]) if pd.notna(row.get("home_score")) else None,
-            "away_score": int(row["away_score"]) if pd.notna(row.get("away_score")) else None,
-            "home_rest_days": int(row["home_rest"]) if pd.notna(row.get("home_rest")) else None,
-            "away_rest_days": int(row["away_rest"]) if pd.notna(row.get("away_rest")) else None,
-            "status": _game_status(row),
+            "game_id": g_id,
+            "season": s_val,
+            "week": w_val,
+            "game_date": g_date,
+            "home_team_id": h_team,
+            "away_team_id": a_team,
+            "home_score": h_score,
+            "away_score": a_score,
+            "home_rest_days": h_rest,
+            "away_rest_days": a_rest,
+            "status": st,
         })
 
     with engine.begin() as conn:
         if is_postgres:
+            from psycopg2.extras import execute_values
+            raw_conn = conn.connection.dbapi_connection
+            cur = raw_conn.cursor()
             sql = f"""
             INSERT INTO {table} (game_id, season, week, game_date, home_team_id, away_team_id,
                                  home_score, away_score, home_rest_days, away_rest_days, status)
-            VALUES (:game_id, :season, :week, :game_date, :home_team_id, :away_team_id,
-                    :home_score, :away_score, :home_rest_days, :away_rest_days, :status)
+            VALUES %s
             ON CONFLICT (game_id) DO UPDATE SET
                 season = EXCLUDED.season,
                 week = EXCLUDED.week,
@@ -127,7 +146,7 @@ def _upsert_games(engine: Engine, games: pd.DataFrame) -> int:
                 status = EXCLUDED.status,
                 updated_at = now()
             """
-            conn.execute(text(sql), records)
+            execute_values(cur, sql, data, page_size=2000)
         else:
             for payload in records:
                 existing = conn.execute(
@@ -160,30 +179,44 @@ def _upsert_odds(engine: Engine, games: pd.DataFrame, source: str) -> int:
     table = qualified_table("silver", "odds")
     sportsbook = "consensus"
     is_postgres = engine.dialect.name != "sqlite"
+
+    games = games.drop_duplicates(subset=["game_id"], keep="last")
+
     records = []
+    data = []
     for _, row in games.iterrows():
+        g_id = str(row["game_id"])
+        sp = float(row["spread_line"]) if pd.notna(row.get("spread_line")) else None
+        ml_h = float(row["home_moneyline"]) if pd.notna(row.get("home_moneyline")) else None
+        ml_a = float(row["away_moneyline"]) if pd.notna(row.get("away_moneyline")) else None
+        tot = float(row["total_line"]) if pd.notna(row.get("total_line")) else None
+
+        data.append((g_id, sportsbook, source, sp, ml_h, ml_a, tot))
         records.append({
-            "game_id": row["game_id"],
+            "game_id": g_id,
             "sportsbook": sportsbook,
             "source": source,
-            "spread": float(row["spread_line"]) if pd.notna(row.get("spread_line")) else None,
-            "moneyline_home": float(row["home_moneyline"]) if pd.notna(row.get("home_moneyline")) else None,
-            "moneyline_away": float(row["away_moneyline"]) if pd.notna(row.get("away_moneyline")) else None,
-            "total": float(row["total_line"]) if pd.notna(row.get("total_line")) else None,
+            "spread": sp,
+            "moneyline_home": ml_h,
+            "moneyline_away": ml_a,
+            "total": tot,
         })
 
     with engine.begin() as conn:
         if is_postgres:
+            from psycopg2.extras import execute_values
+            raw_conn = conn.connection.dbapi_connection
+            cur = raw_conn.cursor()
             sql = f"""
             INSERT INTO {table} (game_id, sportsbook, source, spread, moneyline_home, moneyline_away, total)
-            VALUES (:game_id, :sportsbook, :source, :spread, :moneyline_home, :moneyline_away, :total)
+            VALUES %s
             ON CONFLICT (game_id, sportsbook, source) DO UPDATE SET
                 spread = EXCLUDED.spread,
                 moneyline_home = EXCLUDED.moneyline_home,
                 moneyline_away = EXCLUDED.moneyline_away,
                 total = EXCLUDED.total
             """
-            conn.execute(text(sql), records)
+            execute_values(cur, sql, data, page_size=2000)
         else:
             for payload in records:
                 existing = conn.execute(
