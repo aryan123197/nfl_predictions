@@ -15,10 +15,14 @@ on:
     branches: [main]
 
 concurrency:
-  # A new push to a PR makes the in-flight run obsolete -- cancel it rather
-  # than paying for a result nobody will read.
   group: tests-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs on PRs only. A new push to a PR makes the
+  # in-flight run obsolete, so cancelling saves a result nobody will read.
+  # On main it would do real damage: merging two PRs in quick succession
+  # would cancel the first merge commit's run, leaving a commit on main
+  # that was never fully tested -- and post-merge runs are precisely what
+  # catch two PRs that pass alone but break together.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   offline:
