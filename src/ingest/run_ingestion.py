@@ -52,22 +52,36 @@ def _upsert_games(df: pd.DataFrame, source: str, run_id: int) -> int:
     df["pipeline_run_id"] = run_id
     df["raw_payload_hash"] = df.apply(_row_hash, axis=1)
 
-    with engine.begin() as conn:
-        for _, row in df.iterrows():
-            existing = conn.execute(
-                text(f"SELECT id FROM {table} WHERE game_id = :game_id AND source = :source"),
-                {"game_id": row["game_id"], "source": source},
-            ).fetchone()
+    records = df.where(pd.notnull(df), None).to_dict(orient="records")
+    is_postgres = engine.dialect.name != "sqlite"
 
-            payload = row.to_dict()
-            if existing:
-                set_clause = ", ".join(f"{col} = :{col}" for col in payload if col not in ("game_id", "source"))
-                payload["id"] = existing[0]
-                conn.execute(text(f"UPDATE {table} SET {set_clause} WHERE id = :id"), payload)
-            else:
-                cols = ", ".join(payload.keys())
-                placeholders = ", ".join(f":{c}" for c in payload.keys())
-                conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"), payload)
+    with engine.begin() as conn:
+        if is_postgres:
+            cols = [c for c in records[0].keys() if c != "id"]
+            col_names = ", ".join(cols)
+            placeholders = ", ".join(f":{c}" for c in cols)
+            update_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in ("game_id", "source"))
+            sql = f"""
+            INSERT INTO {table} ({col_names})
+            VALUES ({placeholders})
+            ON CONFLICT (game_id, source) DO UPDATE SET
+                {update_clause}
+            """
+            conn.execute(text(sql), records)
+        else:
+            for payload in records:
+                existing = conn.execute(
+                    text(f"SELECT id FROM {table} WHERE game_id = :game_id AND source = :source"),
+                    {"game_id": payload["game_id"], "source": source},
+                ).fetchone()
+                if existing:
+                    set_clause = ", ".join(f"{col} = :{col}" for col in payload if col not in ("game_id", "source"))
+                    payload["id"] = existing[0]
+                    conn.execute(text(f"UPDATE {table} SET {set_clause} WHERE id = :id"), payload)
+                else:
+                    cols = ", ".join(payload.keys())
+                    placeholders = ", ".join(f":{c}" for c in payload.keys())
+                    conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"), payload)
     return len(df)
 
 
@@ -81,16 +95,11 @@ def _upsert_injuries(df: pd.DataFrame, source: str, run_id: int) -> int:
     df["pipeline_run_id"] = run_id
     df["raw_payload_hash"] = df.apply(_row_hash, axis=1)
 
-    # Injuries are append-only snapshots (a player's status on a given
-    # report day) -- no natural unique key to upsert on, so we just
-    # insert. Deduplication into "current status per player" happens
-    # in the silver transform, not here.
+    records = df.where(pd.notnull(df), None).to_dict(orient="records")
+    cols = ", ".join(records[0].keys())
+    placeholders = ", ".join(f":{c}" for c in records[0].keys())
     with engine.begin() as conn:
-        for _, row in df.iterrows():
-            payload = row.to_dict()
-            cols = ", ".join(payload.keys())
-            placeholders = ", ".join(f":{c}" for c in payload.keys())
-            conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"), payload)
+        conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"), records)
     return len(df)
 
 
@@ -104,24 +113,38 @@ def _upsert_players(df: pd.DataFrame, source: str, run_id: int, season: int) -> 
     df["pipeline_run_id"] = run_id
     df["season"] = season
 
+    records = df.where(pd.notnull(df), None).to_dict(orient="records")
+    is_postgres = engine.dialect.name != "sqlite"
+
     with engine.begin() as conn:
-        for _, row in df.iterrows():
-            existing = conn.execute(
-                text(f"SELECT id FROM {table} WHERE player_id = :player_id "
-                     f"AND season = :season AND source = :source"),
-                {"player_id": row["player_id"], "season": season, "source": source},
-            ).fetchone()
-            payload = row.to_dict()
-            if existing:
-                set_clause = ", ".join(
-                    f"{col} = :{col}" for col in payload if col not in ("player_id", "season", "source")
-                )
-                payload["id"] = existing[0]
-                conn.execute(text(f"UPDATE {table} SET {set_clause} WHERE id = :id"), payload)
-            else:
-                cols = ", ".join(payload.keys())
-                placeholders = ", ".join(f":{c}" for c in payload.keys())
-                conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"), payload)
+        if is_postgres:
+            cols = [c for c in records[0].keys() if c != "id"]
+            col_names = ", ".join(cols)
+            placeholders = ", ".join(f":{c}" for c in cols)
+            update_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in ("player_id", "season", "source"))
+            sql = f"""
+            INSERT INTO {table} ({col_names})
+            VALUES ({placeholders})
+            ON CONFLICT (player_id, season, source) DO UPDATE SET
+                {update_clause}
+            """
+            chunk_size = 1000
+            for i in range(0, len(records), chunk_size):
+                conn.execute(text(sql), records[i:i + chunk_size])
+        else:
+            for payload in records:
+                existing = conn.execute(
+                    text(f"SELECT id FROM {table} WHERE player_id = :player_id AND season = :season AND source = :source"),
+                    {"player_id": payload["player_id"], "season": season, "source": source},
+                ).fetchone()
+                if existing:
+                    set_clause = ", ".join(f"{col} = :{col}" for col in payload if col not in ("player_id", "season", "source"))
+                    payload["id"] = existing[0]
+                    conn.execute(text(f"UPDATE {table} SET {set_clause} WHERE id = :id"), payload)
+                else:
+                    cols = ", ".join(payload.keys())
+                    placeholders = ", ".join(f":{c}" for c in payload.keys())
+                    conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"), payload)
     return len(df)
 
 
