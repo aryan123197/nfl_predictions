@@ -21,7 +21,7 @@ This README tracks **implementation status** against that design.
 | 6 | Automation (GitHub Actions) | 🟡 **CI only** — test workflows running; pipeline scheduling not started |
 | 7 | Live 2026 data connection | ⬜ Not started |
 | 8 | MLOps (MLflow, model registry, monitoring) | ⬜ Not started |
-| 9 | Application (FastAPI + React) | ⬜ Not started |
+| 9 | Application (FastAPI + React) | 🟡 **Slice A working** — read-only API + React UI over silver/gold; prediction panel wired but empty until Phase 4 |
 | 10 | Advanced learning (online/RL) | ⬜ Not started (explicit non-goal for V1) |
 
 ---
@@ -342,6 +342,79 @@ can still be verified against live data on demand.
 This covers CI only. The Phase 6 design-doc work — scheduled *pipeline*
 runs (weekly ingestion, retraining cadence per `DECISIONS.md` #4) — is
 still ahead, and needs Phase 4 to exist first.
+
+---
+
+## What's actually built right now (Phase 9 — Slice A)
+
+A read-only FastAPI service over silver/gold and a React UI on top of it —
+design doc §34 (architecture), §35 (prediction UI). Built to be useful
+*before* a model exists, and to light up automatically once one does.
+
+```
+requirements-api.txt              API-only dependencies (separate from the pipeline/ML stack)
+src/api/main.py                   FastAPI app: the §34 endpoints
+src/api/queries.py                Read-only SQL over silver + gold
+src/api/schemas.py                Pydantic response models
+src/api/predictions.py            The Phase 4 boundary — the ONLY file that knows about ml.predictions
+tests/test_api.py                 16 offline API tests against a real SQLite schema
+frontend/                         Vite + React + TypeScript
+  src/components/WeekView.tsx     Season/week pickers + game grid
+  src/components/GameDetail.tsx   §35 game page
+  src/components/PredictionPanel.tsx  Win probability, predicted score, model vs market
+  src/components/FeatureComparison.tsx  Head-to-head gold.game_features
+  src/components/format.test.ts   14 unit tests, mostly pinning the spread sign convention
+```
+
+**Verified end to end against real data**, not just unit-tested: the full
+pipeline was run for the 2025 season (285 games, 48,771 plays, real EPA),
+the API served it, and the UI was driven in a headless browser — week list,
+game detail, both empty states, and a 404. Response-level tracing showed no
+failing requests other than the deliberate bad-URL test.
+
+### Two design rules worth knowing about
+
+**Nulls are never rendered as numbers.** A missing Elo shows `—`, not `0`.
+Every formatter in `format.ts` returns a placeholder for null/NaN, and a
+real `0.0` still renders as `0.0` so the distinction stays meaningful. This
+is the UI counterpart to the pipeline's NaN discipline — same principle,
+same reason: a plausible-looking placeholder is worse than a visible gap.
+
+**No model means no numbers.** Until Phase 4 lands, the prediction panel
+shows an explicit "no model yet" explanation rather than a 50/50 split, and
+`/model/performance` reports `available: false` instead of zeroed metrics
+(a `0%` accuracy reads like a catastrophically bad model, not a missing
+one). `src/api/predictions.py` checks for `ml.predictions` per request, so
+predictions appear the moment Phase 4 writes the §21 table — verified
+live: the API flipped to `predictions_available: true` with no restart.
+
+**A real bug this caught:** the spread sign convention was implemented
+backwards. Checked against all 285 completed 2025 games,
+`corr(current_spread, home_margin) = +0.506` and home teams won 66.7% of
+games with a positive spread vs 35.0% with a negative one — so **positive
+means the home team is favoured**, and the UI had been naming the wrong
+favourite on every single game while looking entirely plausible. Fixed, and
+pinned by tests that fail against the old convention.
+
+### Running it
+
+```bash
+pip install -r requirements.txt -r requirements-api.txt
+uvicorn src.api.main:app --reload      # http://127.0.0.1:8000/docs
+
+cd frontend && npm install && npm run dev   # http://127.0.0.1:5173
+```
+
+The Vite dev server proxies `/api` to uvicorn, so the browser only ever
+makes same-origin requests and no API URL is baked into a build.
+
+### Deliberately not built yet
+
+`GET /players/{player_id}` and `GET /model/explanation/{game_id}` are in
+§34 but return **501**, not 404 — the routes are specified, they just have
+nothing behind them (player-level features are §15; SHAP needs Phase 4 plus
+Phase 8). Team names are shown as abbreviations because `silver.teams`
+carries no full name.
 
 ---
 

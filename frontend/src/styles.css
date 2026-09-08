@@ -1,0 +1,481 @@
+/*
+ * One small design system, defined as tokens so light and dark stay in sync.
+ *
+ * Colour carries meaning in exactly two places -- prediction confidence and
+ * "better/worse than opponent" on a feature row -- and both also encode the
+ * same information in text or position, so nothing is conveyed by hue alone.
+ */
+
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --border: #dfe3e9;
+  --text: #16191d;
+  --text-dim: #5c6470;
+  --text-faint: #8b94a1;
+  --accent: #1f6feb;
+  --accent-soft: #e8f0fe;
+  --home: #1f6feb;
+  --away: #b5451c;
+  --ok: #1a7f4b;
+  --warn: #9a6700;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 4%);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1116;
+    --surface: #161b22;
+    --surface-2: #1c232c;
+    --border: #2a323d;
+    --text: #e6edf3;
+    --text-dim: #9aa6b2;
+    --text-faint: #6e7c8c;
+    --accent: #4d9cff;
+    --accent-soft: #16283f;
+    --home: #4d9cff;
+    --away: #ff8a5c;
+    --ok: #46c58a;
+    --warn: #d9a441;
+    --shadow: none;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ---------- layout ---------- */
+
+.shell {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 20px 64px;
+}
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 28px 0 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+.masthead .sub {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ---------- controls ---------- */
+
+.controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---------- game list ---------- */
+
+.game-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.game-card {
+  display: block;
+  padding: 16px 18px;
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+
+.game-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.game-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.game-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-bottom: 12px;
+}
+
+.matchup-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+}
+
+.team-name {
+  font-weight: 600;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.score {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.score.dim {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.winner {
+  color: var(--text);
+}
+
+.loser {
+  color: var(--text-faint);
+}
+
+/* ---------- badges ---------- */
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--surface-2);
+}
+
+.badge.final {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.badge.scheduled {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-soft);
+}
+
+/* ---------- detail page ---------- */
+
+.back-link {
+  display: inline-block;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 18px;
+}
+
+.back-link:hover {
+  color: var(--accent);
+}
+
+.matchup-hero {
+  text-align: center;
+  padding: 26px 18px 22px;
+  margin-bottom: 18px;
+}
+
+.matchup-hero .teams {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.matchup-hero .team {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.matchup-hero .vs {
+  color: var(--text-faint);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.matchup-hero .meta {
+  margin-top: 10px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.final-score {
+  font-family: var(--mono);
+  font-size: 30px;
+  font-weight: 700;
+  margin-top: 14px;
+}
+
+.panel {
+  padding: 20px;
+  margin-bottom: 18px;
+}
+
+.panel h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.panel .panel-note {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ---------- win probability bar ---------- */
+
+.prob-bar {
+  display: flex;
+  height: 30px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 6px 0 8px;
+  background: var(--surface-2);
+}
+
+.prob-bar .seg {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+}
+
+/* Away is the left segment, home the right -- each label sits at the bar's
+   outer edge so the two never collide when the split is close to even. */
+.prob-bar .seg.away {
+  background: var(--away);
+}
+
+.prob-bar .seg.home {
+  background: var(--home);
+  justify-content: flex-end;
+}
+
+.prob-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---------- stat grid ---------- */
+
+.stat-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-row .label {
+  text-align: center;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.stat-row .v {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Away sits in the left column and home in the right, matching the "AWAY at
+   HOME" reading order used by the hero and the game cards. Each cell is
+   aligned toward the centre label so the two numbers stay adjacent and easy
+   to compare. */
+.stat-row .v.away {
+  text-align: right;
+}
+
+.stat-row .v.home {
+  text-align: left;
+}
+
+.stat-row .v.better {
+  font-weight: 700;
+}
+
+.stat-row .v.null {
+  color: var(--text-faint);
+}
+
+.kv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+}
+
+.kv .k {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin-bottom: 3px;
+}
+
+.kv .v {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- states ---------- */
+
+.state {
+  padding: 30px 22px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.state .title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.state .detail {
+  font-size: 13px;
+  max-width: 52ch;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+.state.error .title {
+  color: var(--away);
+}
+
+.empty-inline {
+  padding: 20px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-faint);
+  font-size: 13px;
+  background: var(--surface-2);
+}
+
+.empty-inline strong {
+  display: block;
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.skeleton {
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  height: 118px;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  .game-card { transition: none; }
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
