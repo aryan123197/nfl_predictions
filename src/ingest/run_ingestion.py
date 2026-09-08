@@ -57,17 +57,20 @@ def _upsert_games(df: pd.DataFrame, source: str, run_id: int) -> int:
 
     with engine.begin() as conn:
         if is_postgres:
+            from psycopg2.extras import execute_values
+            raw_conn = conn.connection.dbapi_connection
+            cur = raw_conn.cursor()
             cols = [c for c in records[0].keys() if c != "id"]
             col_names = ", ".join(cols)
-            placeholders = ", ".join(f":{c}" for c in cols)
             update_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in ("game_id", "source"))
             sql = f"""
             INSERT INTO {table} ({col_names})
-            VALUES ({placeholders})
+            VALUES %s
             ON CONFLICT (game_id, source) DO UPDATE SET
                 {update_clause}
             """
-            conn.execute(text(sql), records)
+            data = [tuple(r[c] for c in cols) for r in records]
+            execute_values(cur, sql, data, page_size=2000)
         else:
             for payload in records:
                 existing = conn.execute(
@@ -96,10 +99,22 @@ def _upsert_injuries(df: pd.DataFrame, source: str, run_id: int) -> int:
     df["raw_payload_hash"] = df.apply(_row_hash, axis=1)
 
     records = df.where(pd.notnull(df), None).to_dict(orient="records")
-    cols = ", ".join(records[0].keys())
-    placeholders = ", ".join(f":{c}" for c in records[0].keys())
+    is_postgres = engine.dialect.name != "sqlite"
+
     with engine.begin() as conn:
-        conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"), records)
+        if is_postgres:
+            from psycopg2.extras import execute_values
+            raw_conn = conn.connection.dbapi_connection
+            cur = raw_conn.cursor()
+            cols = [c for c in records[0].keys() if c != "id"]
+            col_names = ", ".join(cols)
+            sql = f"INSERT INTO {table} ({col_names}) VALUES %s"
+            data = [tuple(r[c] for c in cols) for r in records]
+            execute_values(cur, sql, data, page_size=2000)
+        else:
+            cols = ", ".join(records[0].keys())
+            placeholders = ", ".join(f":{c}" for c in records[0].keys())
+            conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"), records)
     return len(df)
 
 
@@ -118,19 +133,20 @@ def _upsert_players(df: pd.DataFrame, source: str, run_id: int, season: int) -> 
 
     with engine.begin() as conn:
         if is_postgres:
+            from psycopg2.extras import execute_values
+            raw_conn = conn.connection.dbapi_connection
+            cur = raw_conn.cursor()
             cols = [c for c in records[0].keys() if c != "id"]
             col_names = ", ".join(cols)
-            placeholders = ", ".join(f":{c}" for c in cols)
             update_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in ("player_id", "season", "source"))
             sql = f"""
             INSERT INTO {table} ({col_names})
-            VALUES ({placeholders})
+            VALUES %s
             ON CONFLICT (player_id, season, source) DO UPDATE SET
                 {update_clause}
             """
-            chunk_size = 1000
-            for i in range(0, len(records), chunk_size):
-                conn.execute(text(sql), records[i:i + chunk_size])
+            data = [tuple(r[c] for c in cols) for r in records]
+            execute_values(cur, sql, data, page_size=2000)
         else:
             for payload in records:
                 existing = conn.execute(
