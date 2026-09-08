@@ -155,7 +155,17 @@ def _compute_recent_form(team_game_stats: pd.DataFrame) -> pd.DataFrame:
 def _compute_injury_impact_rows(games: pd.DataFrame, injuries: pd.DataFrame, players: pd.DataFrame) -> pd.DataFrame:
     weights = load_weights()
     injuries = injuries.copy()
-    injuries["reported_at"] = pd.to_datetime(injuries["reported_at"], errors="coerce")
+    # utc=True + tz_localize(None): real reported_at values (pre-2025
+    # seasons; 2025 dropped this field entirely, see Decision #5) are full
+    # ISO8601 timestamps with a UTC offset (e.g. "2022-09-07T21:10:03Z"),
+    # which pandas parses as tz-AWARE. game_date below is a plain date
+    # string with no timezone, parsed tz-NAIVE -- comparing an aware Series
+    # to a naive Timestamp raises TypeError. Normalizing both to naive UTC
+    # loses only sub-day precision, which this cutoff never had anyway
+    # (game_date has no time-of-day component to begin with). Caught by
+    # backfilling real pre-2025 seasons, where this path is actually
+    # exercised -- 2025-only testing never touched tz-aware timestamps.
+    injuries["reported_at"] = pd.to_datetime(injuries["reported_at"], errors="coerce", utc=True).dt.tz_localize(None)
 
     # Prefer the real report timestamp when nflverse provides one. It often
     # doesn't -- nflverse dropped `date_modified` from the 2025 injuries

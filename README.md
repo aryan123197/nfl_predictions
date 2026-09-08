@@ -16,7 +16,7 @@ This README tracks **implementation status** against that design.
 | 1 | Data ingestion (provider → bronze) | ✅ **Working** — see below |
 | 2 | Bronze → Silver → Gold transforms | 🟡 **Silver working** — Gold moved into Phase 3 |
 | 3 | Point-in-time feature engineering | ✅ **Slices A + B working** — Elo, injury impact, rolling EPA stats, full `gold.game_features` (player features deferred) |
-| 4 | ML training (XGBoost baseline) | ⬜ Not started |
+| 4 | ML training (XGBoost baseline) | 🟡 **Win probability working** — score/spread prediction deferred |
 | 5 | Walk-forward backtesting (2025) | ⬜ Not started |
 | 6 | Automation (GitHub Actions) | 🟡 **CI only** — test workflows running; pipeline scheduling not started |
 | 7 | Live 2026 data connection | ⬜ Not started |
@@ -345,11 +345,73 @@ still ahead, and needs Phase 4 to exist first.
 
 ---
 
+## What's actually built right now (Phase 4 — win probability)
+
+Features → XGBoost → Predictions (design doc §24), scoped to win
+probability only — see `DECISIONS.md` #7 for the full reasoning behind
+every choice below, including two real bugs found by backfilling and
+training against real multi-season data rather than synthetic fixtures.
+
+```
+schema/006_ml.sql                     ml.predictions (insert-only) + ml.game_results
+src/transform/game_results_transform.py   silver.games -> ml.game_results (actual outcomes, ATS cover)
+src/ml/features.py                    FEATURE_COLUMNS (explicit, versioned) + training-frame loader
+src/ml/train.py                       CLI entrypoint: train, evaluate, save model, write predictions
+scripts/backfill_seasons.py           Extended to run the FULL pipeline (was bronze-only) across a season range
+tests/test_ml_train.py                Split logic + full-pipeline integration tests (in-memory SQLite)
+```
+
+**Usage:**
+```bash
+# One-time: populate enough history to train on (this now also runs
+# play-by-play + silver + gold, not just bronze ingestion)
+python scripts/backfill_seasons.py --start 2020 --end 2025
+
+# Train, evaluate on the most recent season, write predictions
+python -m src.ml.train
+python -m src.ml.train --holdout-season 2025   # explicit holdout
+```
+
+**Scope:** win probability only (`home_win_probability`/
+`away_win_probability`) — score and margin prediction columns exist on
+`ml.predictions` per the design doc's schema but stay NULL until a
+follow-up slice. One train/holdout split (season-based, or a
+within-season week split if only one season exists) — not yet the
+week-by-week walk-forward retraining loop, which is Phase 5's job,
+built on this same training code. Model versioning is a plain
+`models/<version>/metadata.json` (training data, features,
+hyperparameters, metrics, git commit), not MLflow — that's Phase 8.
+
+**Verified working end-to-end** against real backfilled 2022-2025
+season data (1,139 games): trained on 852 games, evaluated on the 2025
+season holdout (284 games) — 64.1% accuracy, 0.665 log loss, 0.230
+Brier score, all sane for a first, untuned baseline (not suspiciously
+good, which would suggest point-in-time leakage). Re-verified after
+fixing the bugs below. 59/59 offline tests pass (52 existing + 7 new).
+
+**Two real bugs found by backfilling and training against real
+multi-season data** (both invisible to 2025-only testing, and to
+synthetic-fixture unit tests):
+- A timezone comparison crash in the injury-impact cutoff:
+  pre-2025 seasons have real, tz-aware `reported_at` timestamps (2025
+  dropped that field entirely, per Decision #5), and comparing those
+  against a tz-naive `game_date` raised `TypeError`. Never exercised by
+  2025-only data, where `reported_at` was always NULL.
+  Fixed by normalizing both to naive UTC.
+- An all-NULL feature column (e.g. `home_off_epa` in a small synthetic
+  test with no play-by-play) comes back from SQL as pandas `object`
+  dtype, not `float64` — XGBoost rejects `object` dtype outright. Fixed
+  with an explicit cast in `split_features_target`.
+
+---
+
 ## Next steps
 
-The feature table (`gold.game_features`) is now substantive enough to
-start **Phase 4**: an XGBoost baseline trained against it, with the
-model promotion criteria from `DECISIONS.md` #1 applied once a
-candidate exists to compare against. Player-level features and true
-per-drive red-zone efficiency remain natural follow-ups whenever a
-concrete modeling need justifies the added complexity.
+**Phase 5** (walk-forward backtesting, simulating 2025 week-by-week
+per design doc §25) is the natural next step — it wraps `src/ml/train.py`'s
+training code in a retraining loop, applying the retrain-cadence rule
+from `DECISIONS.md` #4 (no retraining on current-season data until Week
+4) and the promotion criteria from `DECISIONS.md` #1 to decide whether
+each retrained candidate actually replaces the production model. Score/
+spread prediction and player-level features remain natural follow-ups
+whenever a concrete modeling need justifies the added complexity.

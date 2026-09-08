@@ -91,7 +91,7 @@ def to_sql_target(schema: str, table: str) -> dict:
 
 
 SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql", "003_gold.sql",
-                "004_silver_plays.sql", "005_gold_rolling_stats.sql"]
+                "004_silver_plays.sql", "005_gold_rolling_stats.sql", "006_ml.sql"]
 
 
 def init_schema() -> None:
@@ -149,10 +149,12 @@ def _translate_ddl_for_sqlite(sql: str) -> str:
     out = out.replace("CREATE SCHEMA IF NOT EXISTS metadata;", "")
     out = out.replace("CREATE SCHEMA IF NOT EXISTS silver;", "")
     out = out.replace("CREATE SCHEMA IF NOT EXISTS gold;", "")
+    out = out.replace("CREATE SCHEMA IF NOT EXISTS ml;", "")
     out = out.replace("bronze.", "bronze_")
     out = out.replace("metadata.", "metadata_")
     out = out.replace("silver.", "silver_")
     out = out.replace("gold.", "gold_")
+    out = out.replace("ml.", "ml_")
     out = out.replace("BIGSERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
     out = out.replace("TIMESTAMPTZ", "TEXT")
     out = out.replace("DATE", "TEXT")

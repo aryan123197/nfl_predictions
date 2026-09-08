@@ -203,6 +203,79 @@ additions once there's a concrete modeling need for them.
 
 ---
 
+## 7. Phase 4 scope: win probability only, single split, no MLflow yet
+
+**Status:** Decided and implemented (Phase 4).
+
+**Problem:** The design doc's own phase breakdown scopes Phase 4 tightly
+("Features → XGBoost → Predictions") and keeps Phase 5 ("simulate 2025
+week-by-week") separate. But §20 describes three prediction types (win
+probability, score, spread) and §27 calls for MLflow versioning, so it
+would be easy to over-scope Phase 4 into building all of that at once.
+
+**Decision:**
+- **Win probability only.** `predicted_home_score`/`predicted_away_score`/
+  `predicted_margin`/`cover_probability` exist as columns on
+  `ml.predictions` (per §21's schema) but are left NULL — score and
+  spread prediction are a follow-up slice that shares this same
+  train/evaluate/predict scaffolding once it exists.
+- **One train/holdout split, not the walk-forward loop.** Training uses
+  `src/ml/train.py::split_train_holdout` — a season-based split by
+  default (train on every season strictly before a holdout season,
+  evaluate on the holdout season), falling back to a within-season
+  week-based split when only one season of data exists. The full
+  week-by-week retrain-and-predict simulation (design doc §25) is
+  Phase 5's job, built around this same training code, not
+  reimplemented here.
+- **Model versioning is a plain `models/<version>/metadata.json`**,
+  not MLflow. MLflow is explicitly Phase 8 (MLOps) per this project's
+  own phase table — Phase 4 tracks the same fields §27 calls for
+  (training data, features, hyperparameters, metrics, git commit) in a
+  format that's trivial to later import into MLflow, without taking on
+  that dependency before there's a real need for experiment comparison
+  across many runs.
+- **Feature set is `src/ml/features.py::FEATURE_COLUMNS`** — an
+  explicit, hand-maintained list, not "every numeric column in
+  `gold.game_features`" — so a trained model's feature set is always
+  traceable to a specific, intentional list rather than silently
+  changing whenever a new gold column is added.
+- **Missing values are left as NaN, not imputed.** XGBoost handles
+  missing values natively (learns a default split direction per node),
+  which was one of the reasons XGBoost was chosen as the baseline in
+  the first place — a large fraction of real rows have NaN
+  `off_epa`/`def_epa` (a team's first 1-3 games of a season, before
+  rolling stats exist), and imputing with e.g. 0 would assert
+  "league-average," a much stronger and more arbitrary claim than
+  "unknown."
+
+**Also found and fixed while implementing this slice** (both only
+surfaced by backfilling and training against real multi-season data,
+not by unit tests against synthetic fixtures):
+- `gold_transform.py`'s injury-impact cutoff compared a tz-aware
+  `reported_at` (real pre-2025 seasons have full ISO8601 timestamps
+  with a UTC offset) against a tz-naive `game_date`, crashing with
+  `TypeError: Cannot compare tz-naive and tz-aware datetime-like
+  objects`. 2025-only testing never exercised this path, since 2025
+  dropped `date_modified` (`reported_at`) entirely (Decision #5) —
+  every `reported_at` was NULL, never a real timestamp. Fixed by
+  normalizing to naive UTC (`utc=True` then `.dt.tz_localize(None)`)
+  right after parsing.
+- `split_features_target` crashed on a training set where an entire
+  feature column happened to be all-NULL (no numeric value anywhere in
+  it, so pandas gives it `object` dtype instead of `float64` — XGBoost
+  rejects `object` dtype outright). Fixed with an explicit
+  `.astype(float)`.
+- `model_version` had only second-level timestamp precision, so two
+  training runs within the same second (a realistic case for an
+  automated retraining pipeline, and for local testing) would collide
+  on the same version string. Fixed by appending a short random suffix.
+
+**Open follow-up:** Score/spread prediction, and the walk-forward
+retraining loop (Phase 5), both build on this scaffolding rather than
+replacing it.
+
+---
+
 ## Revision history
 
 - 2026-09-07: Initial decisions recorded for all four open questions from
@@ -211,3 +284,5 @@ additions once there's a concrete modeling need for them.
   found while implementing and live-testing Phase 3 Slice A.
 - 2026-09-07: Added decision #6 (rolling stats scope), recorded while
   implementing Phase 3 Slice B.
+- 2026-09-08: Added decision #7 (Phase 4 scope), recorded while
+  implementing and live-backfill-testing Phase 4.

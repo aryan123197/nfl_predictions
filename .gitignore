@@ -5,6 +5,7 @@ __pycache__/
 .env
 mlruns/
 mlartifacts/
+models/
 *.egg-info/
 .venv/
 venv/
