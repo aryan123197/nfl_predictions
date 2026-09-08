@@ -38,13 +38,21 @@ class NFLverseProvider(NFLDataProvider):
         self._session = session or requests.Session()
 
     # -- internal helper --------------------------------------------------
-    def _fetch_csv(self, release: str, filename: str, timeout: int = REQUEST_TIMEOUT_SECONDS) -> pd.DataFrame:
+    def _fetch_csv(self, release: str, filename: str, timeout: int = REQUEST_TIMEOUT_SECONDS, max_retries: int = 3) -> pd.DataFrame:
         url = f"{BASE_URL}/{release}/{filename}"
-        try:
-            resp = self._session.get(url, timeout=timeout)
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            raise ProviderError(f"Failed to fetch {url}: {exc}") from exc
+        last_exc = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = self._session.get(url, timeout=timeout)
+                resp.raise_for_status()
+                break
+            except requests.RequestException as exc:
+                last_exc = exc
+                logger.warning("Download attempt %d/%d for %s failed (%s), retrying in %ds...", attempt, max_retries, url, attempt * 2)
+                import time
+                time.sleep(attempt * 2)
+        else:
+            raise ProviderError(f"Failed to fetch {url} after {max_retries} attempts: {last_exc}") from last_exc
 
         # pandas infers compression from a file *path*'s suffix -- a
         # BytesIO has no path, so a gzipped source (e.g. play_by_play's
