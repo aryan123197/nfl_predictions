@@ -1,0 +1,48 @@
+# Offline test suite -- the PR gate.
+#
+# Runs only the tests that need no network (`-m "not integration"`), so a
+# nflverse outage or a slow 40-80MB play-by-play download can never make a
+# PR look broken. The live-data tests still run, on their own schedule --
+# see integration.yml for why they're split out rather than skipped.
+#
+# No services needed: src/db.py defaults DATABASE_URL to a local SQLite
+# file, so the whole suite runs with nothing but pip install.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  # A new push to a PR makes the in-flight run obsolete -- cancel it rather
+  # than paying for a result nobody will read.
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 matches the development environment; 3.12 catches version
+        # drift early, which is cheap now and annoying to discover later.
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run offline tests
+        run: pytest -m "not integration" -v
