@@ -127,8 +127,7 @@ def _upsert_games(engine: Engine, games: pd.DataFrame) -> int:
     with engine.begin() as conn:
         if is_postgres:
             from psycopg2.extras import execute_values
-            raw_conn = conn.connection.dbapi_connection
-            cur = raw_conn.cursor()
+            cur = conn.connection.cursor()
             sql = f"""
             INSERT INTO {table} (game_id, season, week, game_date, home_team_id, away_team_id,
                                  home_score, away_score, home_rest_days, away_rest_days, status)
@@ -205,8 +204,7 @@ def _upsert_odds(engine: Engine, games: pd.DataFrame, source: str) -> int:
     with engine.begin() as conn:
         if is_postgres:
             from psycopg2.extras import execute_values
-            raw_conn = conn.connection.dbapi_connection
-            cur = raw_conn.cursor()
+            cur = conn.connection.cursor()
             sql = f"""
             INSERT INTO {table} (game_id, sportsbook, source, spread, moneyline_home, moneyline_away, total)
             VALUES %s
@@ -271,8 +269,7 @@ def _upsert_players(engine: Engine, players: pd.DataFrame) -> int:
     with engine.begin() as conn:
         if is_postgres:
             from psycopg2.extras import execute_values
-            raw_conn = conn.connection.dbapi_connection
-            cur = raw_conn.cursor()
+            cur = conn.connection.cursor()
             sql = f"""
             INSERT INTO {table} (player_id, name, position, team_id, status)
             VALUES %s
@@ -341,8 +338,7 @@ def _upsert_injuries(engine: Engine, injuries: pd.DataFrame, source: str) -> int
     with engine.begin() as conn:
         if is_postgres:
             from psycopg2.extras import execute_values
-            raw_conn = conn.connection.dbapi_connection
-            cur = raw_conn.cursor()
+            cur = conn.connection.cursor()
             sql = f"""
             INSERT INTO {table} (bronze_id, player_id, team_id, season, week, status, injury_type, reported_at, source)
             VALUES %s

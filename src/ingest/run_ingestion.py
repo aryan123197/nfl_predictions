@@ -58,8 +58,7 @@ def _upsert_games(df: pd.DataFrame, source: str, run_id: int) -> int:
     with engine.begin() as conn:
         if is_postgres:
             from psycopg2.extras import execute_values
-            raw_conn = conn.connection.dbapi_connection
-            cur = raw_conn.cursor()
+            cur = conn.connection.cursor()
             cols = [c for c in records[0].keys() if c != "id"]
             col_names = ", ".join(cols)
             update_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in ("game_id", "source"))
@@ -104,8 +103,7 @@ def _upsert_injuries(df: pd.DataFrame, source: str, run_id: int) -> int:
     with engine.begin() as conn:
         if is_postgres:
             from psycopg2.extras import execute_values
-            raw_conn = conn.connection.dbapi_connection
-            cur = raw_conn.cursor()
+            cur = conn.connection.cursor()
             cols = [c for c in records[0].keys() if c != "id"]
             col_names = ", ".join(cols)
             sql = f"INSERT INTO {table} ({col_names}) VALUES %s"
@@ -134,8 +132,7 @@ def _upsert_players(df: pd.DataFrame, source: str, run_id: int, season: int) -> 
     with engine.begin() as conn:
         if is_postgres:
             from psycopg2.extras import execute_values
-            raw_conn = conn.connection.dbapi_connection
-            cur = raw_conn.cursor()
+            cur = conn.connection.cursor()
             cols = [c for c in records[0].keys() if c != "id"]
             col_names = ", ".join(cols)
             update_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in ("player_id", "season", "source"))

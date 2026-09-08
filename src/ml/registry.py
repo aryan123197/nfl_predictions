@@ -247,8 +247,7 @@ def predict_upcoming_games(
         cols = list(rows[0].keys())
         if engine.dialect.name != "sqlite":
             from psycopg2.extras import execute_values
-            raw_conn = conn.connection.dbapi_connection
-            cur = raw_conn.cursor()
+            cur = conn.connection.cursor()
             col_list = ", ".join(f'"{c}"' for c in cols)
             sql = f"INSERT INTO {pred_table} ({col_list}) VALUES %s"
             data = [tuple(r[c] for c in cols) for r in rows]

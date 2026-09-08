@@ -90,14 +90,13 @@ def run() -> int:
     table = qualified_table("ml", "game_results")
     is_postgres = engine.dialect.name != "sqlite"
     with engine.begin() as conn:
-        if is_postgres:
-            from psycopg2.extras import execute_values
-            raw_conn = conn.connection.dbapi_connection
-            cur = raw_conn.cursor()
-            cur.execute(f"DELETE FROM {table}")
-            if not results.empty:
-                results = results.where(pd.notna(results), None)
-                cols = list(results.columns)
+        conn.execute(text(f"DELETE FROM {table}"))
+        if not results.empty:
+            results = results.where(pd.notna(results), None)
+            cols = list(results.columns)
+            if is_postgres:
+                from psycopg2.extras import execute_values
+                cur = conn.connection.cursor()
                 col_list = ", ".join(f'"{c}"' for c in cols)
                 sql = f"INSERT INTO {table} ({col_list}) VALUES %s"
                 data = [tuple(r[c] for c in cols) for r in results.to_dict(orient="records")]
