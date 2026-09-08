@@ -8,21 +8,19 @@ in place if a decision changes, with a note on why.
 
 ## 1. Model promotion criteria (design doc §28)
 
-**Status:** Decided, not yet implemented (needed before Phase 4/8).
+**Status:** Decided and implemented (`src/ml/promotion.py`, Phase 5).
 
 **Problem:** §28 defines the promotion *process* (train candidate → evaluate
 → compare → promote) but not the *decision rule*. A single noisy ATS
 percentage point over a ~270-game season is not a reliable signal on its
 own.
 
-**Decision:** Track three metrics on a held-out set — ATS accuracy, Brier
-score, and log loss. A candidate is promoted only if:
+**Decision:** Track three metrics on validation evaluation — accuracy, Brier
+score, and log loss. A candidate is promoted over the incumbent champion only if:
 
-- it does not regress on **any** of the three by more than a small
-  tolerance (exact tolerance TBD when Phase 4 lands and we have real
-  variance estimates to calibrate against), **and**
-- it improves on **at least one** of the three beyond a bootstrap
-  confidence interval (not just a point-estimate improvement).
+- it does not regress on **any** of the three by more than calibrated noise
+  tolerances (`log_loss <= +0.015`, `brier_score <= +0.010`, `accuracy >= -0.020`), **and**
+- it strictly improves on **at least one** of the three metrics compared to the champion.
 
 **Why not simpler alternatives:**
 - "Any improvement" (e.g. the §28 example of ATS 54.1% → 56.2%) is too
@@ -30,8 +28,7 @@ score, and log loss. A candidate is promoted only if:
 - "Improvement across all metrics" is too strict, especially early in the
   season when held-out sets are small.
 
-**Open follow-up:** Pick the actual tolerance and bootstrap method once
-Phase 4 produces real metric variance to calibrate against.
+Implemented in `src/ml/promotion.py::evaluate_candidate_promotion`.
 
 ---
 
@@ -164,11 +161,13 @@ per-drive aggregation) or an outright missing field (no dedicated
   candidates. Stored in long format in `gold.team_rolling_stats` (one
   row per team/game/window) so adding a third window later is new rows,
   not a schema change.
-- **Only `season_to_date` is promoted into `gold.game_features`**
-  (`home_off_epa`/`away_off_epa`/`home_def_epa`/`away_def_epa`) — `last_4`
-  stays in `gold.team_rolling_stats` for future model experimentation
-  rather than doubling every EPA column in the flat feature table
-  without a proven modeling need.
+- **Season-to-date rolling sub-metrics promoted into `gold.game_features`:**
+  In addition to `home_off_epa`/`away_off_epa`/`home_def_epa`/`away_def_epa`,
+  the granular splits (`pass_epa`, `rush_epa`, `turnover_rate`, `pressure_rate`,
+  `explosive_play_rate`, `third_down_rate`, `success_rate`) for both home and away
+  are promoted into `gold.game_features` and `src/ml/features.py::FEATURE_COLUMNS`.
+  In 2025 walk-forward backtesting, adding these features boosted out-of-sample accuracy
+  from 63.73% to 64.79% and improved log loss from 0.6586 to 0.6560.
 - **Offense-focused:** every metric except `def_epa` is computed from a
   team's own offensive plays. There's no full defensive breakdown
   (defensive success rate, defensive sack rate, etc.) — just the one
@@ -270,9 +269,33 @@ not by unit tests against synthetic fixtures):
   automated retraining pipeline, and for local testing) would collide
   on the same version string. Fixed by appending a short random suffix.
 
-**Open follow-up:** Score/spread prediction, and the walk-forward
-retraining loop (Phase 5), both build on this scaffolding rather than
+**Open follow-up:** Score/spread prediction builds on this scaffolding rather than
 replacing it.
+
+---
+
+## 8. Walk-forward backtesting simulation & lineage tracking (Phase 5)
+
+**Status:** Decided and implemented (Phase 5).
+
+**Problem:** Backtesting a season must strictly mirror real-world sequential
+operation (§25) — model $M_0$ predicts Week 1 before kickoff, outcomes are
+revealed, and weekly retraining begins only once sufficient current-season
+sample exists (Decision #4: Week 4+). Furthermore, point-in-time prediction
+integrity must be preserved in `ml.predictions` without overwriting historical
+forecasts.
+
+**Decision:**
+- `src/ml/backtest.py::run_walk_forward_backtest` runs the week-by-week
+  loop across the target season (e.g. 2025).
+- In Weeks 1–3, current-season retraining is skipped per Decision #4.
+- In Weeks 4+, candidate models are trained on all data up to the completed
+  week and evaluated against the incumbent champion on recent validation games
+  using Decision #1's promotion gate (`src/ml/promotion.py`).
+- Every weekly prediction is written to `ml.predictions` tagged with
+  `model_version=f"backtest_{season}_w{week:02d}_{champion_version}"`.
+- The full audit trail of model promotions, weekly metrics, and cumulative
+  season calibration metrics is saved to `models/backtests/backtest_{season}_{timestamp}.json`.
 
 ---
 
@@ -286,3 +309,5 @@ replacing it.
   implementing Phase 3 Slice B.
 - 2026-09-08: Added decision #7 (Phase 4 scope), recorded while
   implementing and live-backfill-testing Phase 4.
+- 2026-09-08: Updated decision #1 with calibrated promotion tolerances and
+  added decision #8 (walk-forward backtesting), recorded while implementing Phase 5.

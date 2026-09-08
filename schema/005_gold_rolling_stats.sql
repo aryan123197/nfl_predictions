@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS gold.team_rolling_stats (
     game_id               TEXT NOT NULL REFERENCES silver.games(game_id),
     season                INTEGER NOT NULL,
     week                  INTEGER,
-    window                TEXT NOT NULL,  -- 'season_to_date' | 'last_4'
+    "window"              TEXT NOT NULL,  -- 'season_to_date' | 'last_4'
     games_included        INTEGER NOT NULL,  -- prior games actually available (0 for a team's first game of the season)
     epa_per_play          DOUBLE PRECISION,
     off_epa               DOUBLE PRECISION,
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS gold.team_rolling_stats (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_gold_team_rolling_stats_team_game_window
-    ON gold.team_rolling_stats (team_id, game_id, window);
+    ON gold.team_rolling_stats (team_id, game_id, "window");
 
 -- ---------------------------------------------------------------------
 -- gold.game_features EPA columns (design doc section 18 example)
@@ -60,3 +60,18 @@ ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS home_off_epa DOUBLE PREC
 ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS away_off_epa DOUBLE PRECISION;
 ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS home_def_epa DOUBLE PRECISION;
 ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS away_def_epa DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS home_pass_epa DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS away_pass_epa DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS home_rush_epa DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS away_rush_epa DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS home_turnover_rate DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS away_turnover_rate DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS home_pressure_rate DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS away_pressure_rate DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS home_explosive_play_rate DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS away_explosive_play_rate DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS home_third_down_rate DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS away_third_down_rate DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS home_success_rate DOUBLE PRECISION;
+ALTER TABLE gold.game_features ADD COLUMN IF NOT EXISTS away_success_rate DOUBLE PRECISION;
+

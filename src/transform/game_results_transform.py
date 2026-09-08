@@ -55,15 +55,14 @@ def _compute_results(games: pd.DataFrame, odds: pd.DataFrame) -> pd.DataFrame:
         else:
             home_won = None  # tie -- neither team "won" (same convention as gold.team_game_stats)
 
-        # nflverse's spread convention: negative = home favored by that many
-        # points. Standard ATS formula: home covers if (actual margin +
-        # home spread) > 0 -- an underdog "gets" their spread points added
-        # to their actual result. A push (exactly 0) is neither a cover nor
-        # a non-cover.
+        # Sign convention (empirically verified in format.ts): positive spread =
+        # HOME team favored. Home covers if actual_margin > spread (i.e.
+        # actual_margin - spread > 0). Underdog (negative spread) gets points added
+        # (e.g. actual_margin - (-3.0) = actual_margin + 3.0 > 0).
         spread = spread_by_game.get(g["game_id"])
         covered = None
         if spread is not None and pd.notna(spread):
-            ats_margin = margin + spread
+            ats_margin = margin - spread
             if ats_margin > 0:
                 covered = True
             elif ats_margin < 0:

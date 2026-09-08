@@ -31,30 +31,48 @@ FEATURE_COLUMNS = [
     "home_rest_days", "away_rest_days",
     "home_recent_form", "away_recent_form",
     "home_off_epa", "away_off_epa", "home_def_epa", "away_def_epa",
+    "home_pass_epa", "away_pass_epa",
+    "home_rush_epa", "away_rush_epa",
+    "home_turnover_rate", "away_turnover_rate",
+    "home_pressure_rate", "away_pressure_rate",
+    "home_explosive_play_rate", "away_explosive_play_rate",
+    "home_third_down_rate", "away_third_down_rate",
+    "home_success_rate", "away_success_rate",
+    "home_qb_epa", "away_qb_epa", "qb_epa_diff",
+    "home_qb_success_rate", "away_qb_success_rate",
+    "home_qb_starter_change", "away_qb_starter_change",
     "opening_spread", "current_spread", "spread_movement",
 ]
 
 ID_COLUMNS = ["game_id", "season", "week", "home_team_id", "away_team_id"]
 
 TARGET_COLUMN = "home_team_won"
+TARGET_COLUMNS = [
+    "home_team_won",
+    "actual_home_score",
+    "actual_away_score",
+    "actual_margin",
+    "home_team_covered",
+]
 
 
 def load_training_frame(engine: Engine) -> pd.DataFrame:
     """One row per FINAL game with a known winner: ID_COLUMNS +
-    FEATURE_COLUMNS + TARGET_COLUMN. Ties (home_team_won IS NULL) are
+    FEATURE_COLUMNS + TARGET_COLUMNS. Ties (home_team_won IS NULL) are
     dropped -- see DECISIONS.md for why a binary win-probability
     classifier doesn't have a well-defined label for a tie."""
     features_table = qualified_table("gold", "game_features")
     results_table = qualified_table("ml", "game_results")
 
     query = f"""
-        SELECT f.*, r.home_team_won
+        SELECT f.*, r.home_team_won, r.actual_home_score, r.actual_away_score,
+               r.actual_margin, r.home_team_covered
         FROM {features_table} f
         JOIN {results_table} r ON f.game_id = r.game_id
         WHERE r.home_team_won IS NOT NULL
     """
     df = pd.read_sql(text(query), engine)
-    return df[ID_COLUMNS + FEATURE_COLUMNS + [TARGET_COLUMN]]
+    return df[ID_COLUMNS + FEATURE_COLUMNS + TARGET_COLUMNS]
 
 
 def split_features_target(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:

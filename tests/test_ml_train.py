@@ -142,13 +142,21 @@ def test_train_and_write_predictions_end_to_end(isolated_db, two_season_games):
     assert result["predictions_written"] == 10  # 2 games/week x 5 weeks in the 2024 holdout
     assert 0.0 <= result["metrics"]["accuracy"] <= 1.0
     assert 0.0 <= result["metrics"]["brier_score"] <= 1.0
+    assert result["metrics"]["mae_margin"] >= 0.0
 
     with engine.connect() as conn:
         count = conn.execute(text("SELECT COUNT(*) FROM ml_predictions")).scalar()
-        row = conn.execute(text("SELECT home_win_probability, away_win_probability FROM ml_predictions LIMIT 1")).fetchone()
+        row = conn.execute(
+            text("SELECT home_win_probability, away_win_probability, predicted_home_score, "
+                 "predicted_away_score, predicted_margin, cover_probability FROM ml_predictions LIMIT 1")
+        ).fetchone()
 
     assert count == 10
     assert row[0] == pytest.approx(1.0 - row[1])  # probabilities are complementary
+    assert row[2] is not None and row[3] is not None  # predicted scores present
+    assert row[4] is not None  # predicted margin present
+    assert row[5] is not None  # cover probability present
+    assert row[2] - row[3] == pytest.approx(row[4], abs=0.2)
 
 
 def test_predictions_are_never_overwritten_across_retrains(isolated_db, two_season_games):

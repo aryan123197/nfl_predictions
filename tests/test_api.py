@@ -189,7 +189,7 @@ def test_predictions_light_up_when_phase_4_lands_the_contract_table(client):
     with db.get_engine().begin() as conn:
         conn.execute(
             text(
-                f"CREATE TABLE {table} ("
+                f"CREATE TABLE IF NOT EXISTS {table} ("
                 "prediction_id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT, "
                 "model_version TEXT, prediction_timestamp TEXT, "
                 "home_win_probability REAL, away_win_probability REAL, "
@@ -226,7 +226,7 @@ def test_latest_prediction_wins_when_a_game_is_repredicted(client):
     with db.get_engine().begin() as conn:
         conn.execute(
             text(
-                f"CREATE TABLE {table} ("
+                f"CREATE TABLE IF NOT EXISTS {table} ("
                 "prediction_id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT, "
                 "model_version TEXT, prediction_timestamp TEXT, "
                 "home_win_probability REAL, away_win_probability REAL, "
@@ -239,9 +239,9 @@ def test_latest_prediction_wins_when_a_game_is_repredicted(client):
             conn.execute(
                 text(
                     f"INSERT INTO {table} (game_id, model_version, prediction_timestamp, "
-                    "home_win_probability) VALUES (:g, :v, :ts, :p)"
+                    "home_win_probability, away_win_probability) VALUES (:g, :v, :ts, :p, :away_p)"
                 ),
-                {"g": "2025_01_BUF_KC", "v": version, "ts": ts, "p": prob},
+                {"g": "2025_01_BUF_KC", "v": version, "ts": ts, "p": prob, "away_p": 1.0 - prob},
             )
 
     assert client.get("/predictions/2025_01_BUF_KC").json()["model_version"] == "v0.2"

@@ -19,6 +19,9 @@ import os
 from contextlib import contextmanager
 from typing import Iterator
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
@@ -91,7 +94,8 @@ def to_sql_target(schema: str, table: str) -> dict:
 
 
 SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql", "003_gold.sql",
-                "004_silver_plays.sql", "005_gold_rolling_stats.sql", "006_ml.sql"]
+                "004_silver_plays.sql", "005_gold_rolling_stats.sql", "006_ml.sql",
+                "007_gold_player_stats.sql"]
 
 
 def init_schema() -> None:

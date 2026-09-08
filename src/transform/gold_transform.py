@@ -53,6 +53,12 @@ from src.db import get_engine, init_schema, qualified_table
 from src.features.elo import compute_elo_ratings
 from src.features.game_status import is_final_game
 from src.features.injury_impact import compute_team_injury_impact, load_weights
+from src.features.qb_stats import (
+    compute_per_game_qb_stats,
+    identify_game_starters,
+    compute_rolling_qb_stats,
+    extract_qb_game_features,
+)
 from src.features.rolling_stats import compute_per_game_team_stats, compute_rolling_stats
 
 logging.basicConfig(
@@ -274,7 +280,15 @@ def run() -> dict[str, int]:
     rolling_count = _replace_table(engine, "gold", "team_rolling_stats", rolling_stats)
     logger.info("Rebuilt gold.team_rolling_stats: %d rows", rolling_count)
 
-    features = _assemble_game_features(games, elo, injury_rows, recent_form, game_odds, rolling_stats)
+    per_game_qb = compute_per_game_qb_stats(plays)
+    starters = identify_game_starters(per_game_qb, team_game_stats[["team_id", "game_id", "season", "week"]])
+    qb_rolling = compute_rolling_qb_stats(per_game_qb, starters)
+    qb_count = _replace_table(engine, "gold", "qb_rolling_stats", qb_rolling)
+    logger.info("Rebuilt gold.qb_rolling_stats: %d rows", qb_count)
+
+    qb_features = extract_qb_game_features(qb_rolling, starters, games)
+
+    features = _assemble_game_features(games, elo, injury_rows, recent_form, game_odds, rolling_stats, qb_features)
     features_count = _replace_table(engine, "gold", "game_features", features)
     logger.info("Rebuilt gold.game_features: %d rows", features_count)
 
@@ -284,17 +298,20 @@ def run() -> dict[str, int]:
         "injury_impact": injury_count,
         "game_odds": odds_count,
         "team_rolling_stats": rolling_count,
+        "qb_rolling_stats": qb_count,
         "game_features": features_count,
     }
 
 
 def _assemble_game_features(games: pd.DataFrame, elo: pd.DataFrame, injury_rows: pd.DataFrame,
                              recent_form: pd.DataFrame, game_odds: pd.DataFrame,
-                             rolling_stats: pd.DataFrame) -> pd.DataFrame:
+                             rolling_stats: pd.DataFrame,
+                             qb_features: pd.DataFrame) -> pd.DataFrame:
     elo_by_team_game = {(r["team_id"], r["game_id"]): r["elo_pre"] for _, r in elo.iterrows()}
     injury_by_team_game = {(r["team_id"], r["game_id"]): r["injury_impact"] for _, r in injury_rows.iterrows()}
     form_by_team_game = {(r["team_id"], r["game_id"]): r["recent_form"] for _, r in recent_form.iterrows()}
     odds_by_game = {r["game_id"]: r for _, r in game_odds.iterrows()}
+    qb_by_game = {r["game_id"]: r for _, r in qb_features.iterrows()} if not qb_features.empty else {}
     # season_to_date is the window promoted into game_features -- last_4
     # stays in gold.team_rolling_stats only, see schema/005_gold_rolling_stats.sql.
     season_to_date = rolling_stats[rolling_stats["window"] == "season_to_date"] if not rolling_stats.empty else rolling_stats
@@ -309,6 +326,7 @@ def _assemble_game_features(games: pd.DataFrame, elo: pd.DataFrame, injury_rows:
         odds_row = odds_by_game.get(game_id)
         home_rolling = rolling_by_team_game.get((home_id, game_id))
         away_rolling = rolling_by_team_game.get((away_id, game_id))
+        qb_row = qb_by_game.get(game_id)
 
         rows.append({
             "game_id": game_id,
@@ -334,6 +352,29 @@ def _assemble_game_features(games: pd.DataFrame, elo: pd.DataFrame, injury_rows:
             "away_off_epa": away_rolling["off_epa"] if away_rolling is not None else None,
             "home_def_epa": home_rolling["def_epa"] if home_rolling is not None else None,
             "away_def_epa": away_rolling["def_epa"] if away_rolling is not None else None,
+            "home_pass_epa": home_rolling["pass_epa"] if home_rolling is not None else None,
+            "away_pass_epa": away_rolling["pass_epa"] if away_rolling is not None else None,
+            "home_rush_epa": home_rolling["rush_epa"] if home_rolling is not None else None,
+            "away_rush_epa": away_rolling["rush_epa"] if away_rolling is not None else None,
+            "home_turnover_rate": home_rolling["turnover_rate"] if home_rolling is not None else None,
+            "away_turnover_rate": away_rolling["turnover_rate"] if away_rolling is not None else None,
+            "home_pressure_rate": home_rolling["pressure_rate"] if home_rolling is not None else None,
+            "away_pressure_rate": away_rolling["pressure_rate"] if away_rolling is not None else None,
+            "home_explosive_play_rate": home_rolling["explosive_play_rate"] if home_rolling is not None else None,
+            "away_explosive_play_rate": away_rolling["explosive_play_rate"] if away_rolling is not None else None,
+            "home_third_down_rate": home_rolling["third_down_rate"] if home_rolling is not None else None,
+            "away_third_down_rate": away_rolling["third_down_rate"] if away_rolling is not None else None,
+            "home_success_rate": home_rolling["success_rate"] if home_rolling is not None else None,
+            "away_success_rate": away_rolling["success_rate"] if away_rolling is not None else None,
+            "home_qb_id": qb_row["home_qb_id"] if qb_row is not None else None,
+            "away_qb_id": qb_row["away_qb_id"] if qb_row is not None else None,
+            "home_qb_epa": qb_row["home_qb_epa"] if qb_row is not None else None,
+            "away_qb_epa": qb_row["away_qb_epa"] if qb_row is not None else None,
+            "qb_epa_diff": qb_row["qb_epa_diff"] if qb_row is not None else None,
+            "home_qb_success_rate": qb_row["home_qb_success_rate"] if qb_row is not None else None,
+            "away_qb_success_rate": qb_row["away_qb_success_rate"] if qb_row is not None else None,
+            "home_qb_starter_change": qb_row["home_qb_starter_change"] if qb_row is not None else None,
+            "away_qb_starter_change": qb_row["away_qb_starter_change"] if qb_row is not None else None,
         })
     return pd.DataFrame(rows)
 

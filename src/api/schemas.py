@@ -36,6 +36,29 @@ class GameFeatures(BaseModel):
     away_off_epa: Optional[float] = None
     home_def_epa: Optional[float] = Field(None, description="Season-to-date EPA/play allowed, prior games only")
     away_def_epa: Optional[float] = None
+    home_pass_epa: Optional[float] = None
+    away_pass_epa: Optional[float] = None
+    home_rush_epa: Optional[float] = None
+    away_rush_epa: Optional[float] = None
+    home_turnover_rate: Optional[float] = None
+    away_turnover_rate: Optional[float] = None
+    home_pressure_rate: Optional[float] = None
+    away_pressure_rate: Optional[float] = None
+    home_explosive_play_rate: Optional[float] = None
+    away_explosive_play_rate: Optional[float] = None
+    home_third_down_rate: Optional[float] = None
+    away_third_down_rate: Optional[float] = None
+    home_success_rate: Optional[float] = None
+    away_success_rate: Optional[float] = None
+    home_qb_id: Optional[str] = None
+    away_qb_id: Optional[str] = None
+    home_qb_epa: Optional[float] = None
+    away_qb_epa: Optional[float] = None
+    qb_epa_diff: Optional[float] = None
+    home_qb_success_rate: Optional[float] = None
+    away_qb_success_rate: Optional[float] = None
+    home_qb_starter_change: Optional[float] = None
+    away_qb_starter_change: Optional[float] = None
     opening_spread: Optional[float] = None
     current_spread: Optional[float] = None
     spread_movement: Optional[float] = Field(
@@ -59,6 +82,7 @@ class Prediction(BaseModel):
     predicted_away_score: Optional[float] = None
     predicted_margin: Optional[float] = None
     market_spread: Optional[float] = None
+    cover_probability: Optional[float] = None
 
 
 class Game(BaseModel):

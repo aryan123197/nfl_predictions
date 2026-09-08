@@ -17,11 +17,11 @@ This README tracks **implementation status** against that design.
 | 2 | Bronze → Silver → Gold transforms | 🟡 **Silver working** — Gold moved into Phase 3 |
 | 3 | Point-in-time feature engineering | ✅ **Slices A + B working** — Elo, injury impact, rolling EPA stats, full `gold.game_features` (player features deferred) |
 | 4 | ML training (XGBoost baseline) | 🟡 **Win probability working** — score/spread prediction deferred |
-| 5 | Walk-forward backtesting (2025) | ⬜ Not started |
-| 6 | Automation (GitHub Actions) | 🟡 **CI only** — test workflows running; pipeline scheduling not started |
+| 5 | Walk-forward backtesting (2025) | ✅ **Working** — week-by-week simulation with Decision #1 promotion gate & Decision #4 cadence |
+| 6 | Automation (GitHub Actions) | ✅ **Working** — scheduled data & prediction pipeline + weekly retraining & promotion gate |
 | 7 | Live 2026 data connection | ⬜ Not started |
 | 8 | MLOps (MLflow, model registry, monitoring) | ⬜ Not started |
-| 9 | Application (FastAPI + React) | 🟡 **Slice A working** — read-only API + React UI over silver/gold; prediction panel wired but empty until Phase 4 |
+| 9 | Application (FastAPI + React) | 🟡 **Slice A working** — read-only API + React UI over silver/gold; prediction panel wired |
 | 10 | Advanced learning (online/RL) | ⬜ Not started (explicit non-goal for V1) |
 
 ---
@@ -369,6 +369,37 @@ python scripts/backfill_seasons.py --start 2020 --end 2025
 python -m src.ml.train
 ```
 
+### Phase 5 — Walk-forward backtesting (2025)
+Simulates sequential real-world operation and retraining across the 2025 season —
+design doc §25 (walk-forward training), §26 (continuous learning), §28 (model promotion).
+
+```
+src/ml/promotion.py                Candidate promotion gate (Decision #1 multi-metric tolerance rules)
+src/ml/backtest.py                 CLI entrypoint: sequential week-by-week simulation loop
+tests/test_backtest.py             Unit tests + full walk-forward SQLite simulation
+```
+
+**Usage:**
+```bash
+# Run week-by-week backtest simulation on the 2025 season
+python -m src.ml.backtest --season 2025
+
+# Custom starting week or retraining threshold
+python -m src.ml.backtest --season 2025 --start-week 1 --retrain-start-week 4
+```
+
+**What it does:**
+1. Trains an initial baseline champion model on all historical seasons strictly prior to 2025 (`season < 2025`).
+2. Iterates week-by-week ($W = 1 \dots 18$):
+   - Generates pre-game out-of-sample predictions for Week $W$ using the active champion model.
+   - Inserts predictions into `ml.predictions` tagged with `model_version=f"backtest_{season}_w{W}_{champ_version}"`.
+   - Resolves actual results from `ml.game_results` and scores out-of-sample accuracy, log loss, and Brier score.
+   - Enforces the Decision #4 retraining cadence: Weeks 1–3 skip current-season retraining to avoid overfitting on tiny samples. From Week 4 onward, trains candidate models on all data up to Week $W$.
+   - Evaluates candidate models against the champion on validation games using Decision #1's promotion gate (`src/ml/promotion.py`). If the candidate improves without exceeding regression tolerances, it is promoted to active champion.
+3. Aggregates cumulative season performance and exports full lineage logs and summary JSON to `models/backtests/backtest_{season}_{timestamp}.json`.
+
+---
+
 ### Phase 9 — Slice A: Read-only API + React UI
 A read-only FastAPI service over silver/gold and a React UI on top of it —
 design doc §34 (architecture), §35 (prediction UI).
@@ -393,18 +424,44 @@ frontend/                         Vite + React + TypeScript
 pip install -r requirements.txt -r requirements-api.txt
 uvicorn src.api.main:app --reload      # http://127.0.0.1:8000/docs
 
-cd frontend && npm install && npm run dev   # http://127.0.0.1:5173
+---
+
+### Phase 6 — Automated Pipelines & Continuous Retraining (GitHub Actions)
+Fully automated, scheduled, cloud-native orchestration (design doc §26, §28, §29, §30, §31) with lineage tracking in `metadata.pipeline_runs` and active champion management in `models/champion`.
+
 ```
+src/ml/registry.py                    Champion model loader, promotion registry, & prediction generator
+src/pipeline/run_pipeline.py          CLI/Workflow entrypoint: Ingest -> Silver -> Gold -> Predict
+src/pipeline/run_retrain.py           CLI/Workflow entrypoint: Results -> Evaluation -> Retrain -> Promotion Gate
+.github/workflows/pipeline.yml        Scheduled data & prediction refresh (Wed/Fri/Sun 14:00 UTC)
+.github/workflows/retrain.yml         Scheduled weekly retraining & candidate promotion (Tue 06:00 UTC)
+.github/workflows/tests.yml           PR gate: offline test suite across Python 3.11/3.12 + frontend
+.github/workflows/integration.yml     Weekly live-data canary against upstream nflverse
+tests/test_pipeline.py                5 offline integration tests with SQLite & mock providers
+```
+
+**Usage:**
+```bash
+# Run full automated data & prediction pipeline
+python -m src.pipeline.run_pipeline --season 2025 --week 1
+
+# Run weekly outcome evaluation & candidate retraining loop
+python -m src.pipeline.run_retrain --season 2025 --week 6
+
+# Force retrain during early season (overriding Decision #4's Week 1-3 skip)
+python -m src.pipeline.run_retrain --season 2025 --week 2 --force-retrain
+```
+
+**Workflows:**
+1. **Data Ingestion & Prediction Refresh (`.github/workflows/pipeline.yml`)**:
+   - Runs Wednesdays, Fridays, and Sundays before kickoff.
+   - Refreshes odds, injury reports, silver, and gold features, then generates predictions using the active champion model.
+2. **Weekly Model Retraining (`.github/workflows/retrain.yml`)**:
+   - Runs Tuesdays after Monday Night Football.
+   - Syncs game results, checks Decision #4's cadence gate, trains candidate models on cumulative data, and promotes candidates to champion via Decision #1's multi-metric gate.
 
 ---
 
 ## Next steps
 
-**Phase 5** (walk-forward backtesting, simulating 2025 week-by-week
-per design doc §25) is the natural next step — it wraps `src/ml/train.py`'s
-training code in a retraining loop, applying the retrain-cadence rule
-from `DECISIONS.md` #4 (no retraining on current-season data until Week
-4) and the promotion criteria from `DECISIONS.md` #1 to decide whether
-each retrained candidate actually replaces the production model. Score/
-spread prediction and player-level features remain natural follow-ups
-whenever a concrete modeling need justifies the added complexity.
+**Phase 7** (connecting live 2026 data sources) and **Phase 8** (MLOps with MLflow and advanced monitoring) are the next milestones on the roadmap. Model spread/margin predictions and player-level feature extensions (design doc §15) remain available as follow-up modeling enhancements.

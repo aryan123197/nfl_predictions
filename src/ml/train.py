@@ -33,15 +33,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 import xgboost as xgb
-from sklearn.metrics import accuracy_score, brier_score_loss, log_loss
+from sklearn.metrics import accuracy_score, brier_score_loss, log_loss, mean_absolute_error, mean_squared_error
 from sqlalchemy import text
 
 from src.db import get_engine, init_schema, qualified_table
@@ -55,10 +57,8 @@ logger = logging.getLogger("ml_train")
 
 MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "models"
 
-# A shallow, lightly-regularized baseline -- deliberately conservative given
-# how little data exists per season (~270 games). Revisit once there's a
-# real hyperparameter-tuning need, not before.
-XGB_PARAMS = {
+# Hyperparameters for win probability classifier and score/margin regressors
+XGB_CLASSIFIER_PARAMS = {
     "n_estimators": 200,
     "max_depth": 3,
     "learning_rate": 0.05,
@@ -67,10 +67,78 @@ XGB_PARAMS = {
     "eval_metric": "logloss",
 }
 
+XGB_REGRESSOR_PARAMS = {
+    "n_estimators": 150,
+    "max_depth": 3,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "eval_metric": "mae",
+}
+
 # Below this many holdout games, evaluation metrics are too noisy to mean
 # much (a single upset swings accuracy by several points) -- warn rather
 # than silently reporting a number that looks precise but isn't.
 MIN_HOLDOUT_GAMES_FOR_RELIABLE_METRICS = 50
+
+
+class NFLPredictionModel:
+    """Multi-target prediction bundle for NFL games:
+    - Win probability (binary classification)
+    - Standalone Margin (continuous regression: Home Score - Away Score)
+    - Spread Residual Model (predicts residual adjustment: Actual Margin - Market Spread)
+    - Total points (continuous regression: Home Score + Away Score)
+    - ATS cover probability (derived from empirical residual ECDF / key numbers).
+    """
+
+    def __init__(
+        self,
+        win_model: xgb.XGBClassifier,
+        margin_model: xgb.XGBRegressor,
+        total_model: xgb.XGBRegressor,
+        spread_residual_model: xgb.XGBRegressor | None = None,
+        margin_std: float = 13.5,
+        historical_residuals: np.ndarray | None = None,
+    ):
+        self.win_model = win_model
+        self.margin_model = margin_model
+        self.total_model = total_model
+        self.spread_residual_model = spread_residual_model
+        self.margin_std = float(margin_std) if margin_std > 1.0 else 13.5
+        self.historical_residuals = historical_residuals
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        return self.win_model.predict_proba(X)
+
+    def predict_margin(self, X: pd.DataFrame, market_spreads: pd.Series | np.ndarray | None = None) -> np.ndarray:
+        pred = self.margin_model.predict(X)
+        if self.spread_residual_model is not None and market_spreads is not None:
+            spreads = pd.Series(market_spreads).values
+            has_spread = pd.notna(spreads)
+            if np.any(has_spread):
+                delta = self.spread_residual_model.predict(X)
+                pred = np.where(has_spread, spreads + delta, pred)
+        return pred
+
+    def predict_total(self, X: pd.DataFrame) -> np.ndarray:
+        return self.total_model.predict(X)
+
+    def predict_scores(self, X: pd.DataFrame, market_spreads: pd.Series | np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+        margin = self.predict_margin(X, market_spreads)
+        total = self.predict_total(X)
+        home_score = (total + margin) / 2.0
+        away_score = (total - margin) / 2.0
+        return home_score, away_score
+
+    def predict_cover_proba(self, X: pd.DataFrame, market_spreads: pd.Series | np.ndarray) -> np.ndarray:
+        from src.ml.betting import calculate_empirical_cover_probability
+        margin = self.predict_margin(X, market_spreads)
+        return calculate_empirical_cover_probability(
+            predicted_margins=margin,
+            market_spreads=market_spreads,
+            historical_residuals=self.historical_residuals,
+            default_std=self.margin_std,
+        )
 
 
 def _git_commit() -> str | None:
@@ -115,20 +183,103 @@ def split_train_holdout(df: pd.DataFrame, holdout_season: int | None) -> tuple[p
     return train, holdout, f"season<{holdout_season}"
 
 
-def train_and_evaluate(train_df: pd.DataFrame, holdout_df: pd.DataFrame) -> tuple[xgb.XGBClassifier, dict]:
-    X_train, y_train = split_features_target(train_df)
-    X_holdout, y_holdout = split_features_target(holdout_df)
+def train_and_evaluate(train_df: pd.DataFrame, holdout_df: pd.DataFrame) -> tuple[NFLPredictionModel, dict]:
+    X_train, y_win_train = split_features_target(train_df)
+    X_holdout, y_win_holdout = split_features_target(holdout_df)
 
-    model = xgb.XGBClassifier(**XGB_PARAMS)
-    model.fit(X_train, y_train)
+    y_margin_train = train_df["actual_margin"].astype(float)
+    y_total_train = (train_df["actual_home_score"] + train_df["actual_away_score"]).astype(float)
 
+    y_margin_holdout = holdout_df["actual_margin"].astype(float)
+    y_total_holdout = (holdout_df["actual_home_score"] + holdout_df["actual_away_score"]).astype(float)
+
+    # 1. Fit Win Probability Classifier
+    win_model = xgb.XGBClassifier(**XGB_CLASSIFIER_PARAMS)
+    win_model.fit(X_train, y_win_train)
+
+    # 2. Fit Standalone Margin Regressor
+    margin_model = xgb.XGBRegressor(**XGB_REGRESSOR_PARAMS)
+    margin_model.fit(X_train, y_margin_train)
+
+    # 3. Fit Total Score Regressor
+    total_model = xgb.XGBRegressor(**XGB_REGRESSOR_PARAMS)
+    total_model.fit(X_train, y_total_train)
+
+    # 4. Fit Spread Residual Regressor
+    has_spread_train = train_df["current_spread"].notna()
+    spread_residual_model = None
+    if has_spread_train.sum() >= 20:
+        spread_residual_model = xgb.XGBRegressor(
+            n_estimators=100,
+            max_depth=2,
+            learning_rate=0.03,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            eval_metric="mae",
+        )
+        y_ats_train = (train_df["actual_margin"] - train_df["current_spread"]).astype(float)
+        spread_residual_model.fit(X_train[has_spread_train], y_ats_train[has_spread_train])
+
+    # Estimate training residual std for margin
+    train_pred_margins = (
+        np.where(
+            has_spread_train.values,
+            train_df["current_spread"].values + spread_residual_model.predict(X_train),
+            margin_model.predict(X_train),
+        )
+        if spread_residual_model is not None
+        else margin_model.predict(X_train)
+    )
+    residuals = y_margin_train.values - train_pred_margins
+    margin_std = float(np.std(residuals)) if len(residuals) > 1 else 13.5
+    if margin_std < 1.0:
+        margin_std = 13.5
+
+    model = NFLPredictionModel(
+        win_model=win_model,
+        margin_model=margin_model,
+        total_model=total_model,
+        spread_residual_model=spread_residual_model,
+        margin_std=margin_std,
+        historical_residuals=residuals,
+    )
+
+    # Evaluate Win Probability
     probs = model.predict_proba(X_holdout)[:, 1]
-    preds = (probs >= 0.5).astype(int)
+    win_preds = (probs >= 0.5).astype(int)
+
+    # Evaluate Margin & Total (with market spreads for residual adjustment)
+    market_spreads_holdout = holdout_df["current_spread"].astype(float)
+    pred_margins = model.predict_margin(X_holdout, market_spreads=market_spreads_holdout)
+    pred_totals = model.predict_total(X_holdout)
+
+    mae_margin = float(mean_absolute_error(y_margin_holdout, pred_margins))
+    rmse_margin = float(np.sqrt(mean_squared_error(y_margin_holdout, pred_margins)))
+    mae_total = float(mean_absolute_error(y_total_holdout, pred_totals))
+
+    # Evaluate ATS Accuracy on games with odds (excluding pushes)
+    market_spreads = holdout_df["current_spread"].astype(float)
+    has_odds = market_spreads.notna()
+    ats_accuracy = None
+    if has_odds.sum() > 0:
+        ats_preds = pred_margins[has_odds]
+        ats_lines = market_spreads[has_odds].values
+        ats_actuals = y_margin_holdout[has_odds].values
+
+        non_push = (ats_actuals != ats_lines) & (ats_preds != ats_lines)
+        if non_push.sum() > 0:
+            model_picked_home = ats_preds[non_push] > ats_lines[non_push]
+            actual_home_covered = ats_actuals[non_push] > ats_lines[non_push]
+            ats_accuracy = float(np.mean(model_picked_home == actual_home_covered))
 
     metrics = {
-        "accuracy": float(accuracy_score(y_holdout, preds)),
-        "log_loss": float(log_loss(y_holdout, probs, labels=[0, 1])),
-        "brier_score": float(brier_score_loss(y_holdout, probs)),
+        "accuracy": float(accuracy_score(y_win_holdout, win_preds)),
+        "log_loss": float(log_loss(y_win_holdout, probs, labels=[0, 1])),
+        "brier_score": float(brier_score_loss(y_win_holdout, probs)),
+        "mae_margin": mae_margin,
+        "rmse_margin": rmse_margin,
+        "mae_total": mae_total,
+        "ats_accuracy": ats_accuracy,
         "n_train": len(train_df),
         "n_holdout": len(holdout_df),
     }
@@ -139,7 +290,7 @@ def train_and_evaluate(train_df: pd.DataFrame, holdout_df: pd.DataFrame) -> tupl
     return model, metrics
 
 
-def save_model(model: xgb.XGBClassifier, metrics: dict, split_description: str, model_version: str) -> Path:
+def save_model(model: NFLPredictionModel, metrics: dict, split_description: str, model_version: str) -> Path:
     out_dir = MODELS_DIR / model_version
     out_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, out_dir / "model.joblib")
@@ -149,9 +300,13 @@ def save_model(model: xgb.XGBClassifier, metrics: dict, split_description: str, 
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "git_commit": _git_commit(),
         "feature_columns": FEATURE_COLUMNS,
-        "target": "home_team_won",
+        "target": ["home_team_won", "actual_margin", "actual_total"],
         "split": split_description,
-        "hyperparameters": XGB_PARAMS,
+        "hyperparameters": {
+            "classifier": XGB_CLASSIFIER_PARAMS,
+            "regressor": XGB_REGRESSOR_PARAMS,
+        },
+        "margin_std": model.margin_std,
         "metrics": metrics,
     }
     with open(out_dir / "metadata.json", "w") as f:
@@ -159,23 +314,29 @@ def save_model(model: xgb.XGBClassifier, metrics: dict, split_description: str, 
     return out_dir
 
 
-def write_predictions(engine, holdout_df: pd.DataFrame, model: xgb.XGBClassifier, model_version: str) -> int:
+def write_predictions(engine, holdout_df: pd.DataFrame, model: NFLPredictionModel, model_version: str) -> int:
     X_holdout, _ = split_features_target(holdout_df)
     probs = model.predict_proba(X_holdout)[:, 1]
+    home_scores, away_scores = model.predict_scores(X_holdout)
+    margins = model.predict_margin(X_holdout)
+    market_spreads = holdout_df["current_spread"].astype(float)
+    cover_probs = model.predict_cover_proba(X_holdout, market_spreads)
 
     table = qualified_table("ml", "predictions")
     rows = []
-    for (_, g), home_prob in zip(holdout_df.iterrows(), probs):
+    for i, (_, g) in enumerate(holdout_df.iterrows()):
+        m_spread = float(g["current_spread"]) if pd.notna(g["current_spread"]) else None
+        c_prob = float(cover_probs[i]) if m_spread is not None else None
         rows.append({
             "game_id": g["game_id"],
             "model_version": model_version,
-            "home_win_probability": float(home_prob),
-            "away_win_probability": float(1.0 - home_prob),
-            "predicted_home_score": None,   # score prediction: deferred, see module docstring
-            "predicted_away_score": None,
-            "predicted_margin": None,
-            "market_spread": g["current_spread"] if pd.notna(g["current_spread"]) else None,
-            "cover_probability": None,      # deferred alongside score/margin prediction
+            "home_win_probability": float(probs[i]),
+            "away_win_probability": float(1.0 - probs[i]),
+            "predicted_home_score": float(round(home_scores[i], 1)),
+            "predicted_away_score": float(round(away_scores[i], 1)),
+            "predicted_margin": float(round(margins[i], 1)),
+            "market_spread": m_spread,
+            "cover_probability": float(round(c_prob, 4)) if c_prob is not None else None,
             "feature_snapshot_id": model_version,
         })
     if not rows:
@@ -228,7 +389,7 @@ def run(holdout_season: int | None = None) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train the Phase 4 XGBoost win-probability baseline.")
+    parser = argparse.ArgumentParser(description="Train the Phase 4/7 XGBoost win-probability, score, and spread models.")
     parser.add_argument("--holdout-season", type=int, default=None,
                          help="Season to hold out for evaluation (default: the most recent season present).")
     args = parser.parse_args()

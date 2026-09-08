@@ -52,14 +52,21 @@ def _table_name() -> str:
 
 
 def predictions_available() -> bool:
-    """True when Phase 4 has landed a predictions table in this database.
+    """True when Phase 4 has landed predictions in this database.
 
     Checked per-request rather than cached at import: the API may well be
-    running while the Phase 4 agent creates the table, and a cached False
+    running while a training run populates the table, and a cached False
     would require a restart to notice.
     """
     engine = get_engine()
-    return inspect(engine).has_table(_table_name())
+    if not inspect(engine).has_table(_table_name()):
+        return False
+    try:
+        with engine.connect() as conn:
+            has_row = conn.execute(text(f"SELECT 1 FROM {_table_name()} LIMIT 1")).first()
+            return has_row is not None
+    except Exception:
+        return False
 
 
 def get_prediction(game_id: str) -> Optional[dict]:

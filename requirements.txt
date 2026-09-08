@@ -1,5 +1,5 @@
 # --- Phase 1: ingestion ---
-pandas>=2.2
+pandas>=2.2,<3.0
 requests>=2.31
 sqlalchemy>=2.0
 psycopg2-binary>=2.9   # Postgres driver (not needed for local sqlite dev)
@@ -9,7 +9,7 @@ python-dotenv>=1.0
 pyyaml>=6.0
 
 # --- Phase 4: ML training ---
-xgboost>=2.0
+xgboost>=2.0,<3.0
 scikit-learn>=1.4
 joblib>=1.3
 
