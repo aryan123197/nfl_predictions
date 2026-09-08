@@ -18,7 +18,7 @@ This README tracks **implementation status** against that design.
 | 3 | Point-in-time feature engineering | ✅ **Slices A + B working** — Elo, injury impact, rolling EPA stats, full `gold.game_features` (player features deferred) |
 | 4 | ML training (XGBoost baseline) | ⬜ Not started |
 | 5 | Walk-forward backtesting (2025) | ⬜ Not started |
-| 6 | Automation (GitHub Actions) | ⬜ Not started |
+| 6 | Automation (GitHub Actions) | 🟡 **CI only** — test workflows running; pipeline scheduling not started |
 | 7 | Live 2026 data connection | ⬜ Not started |
 | 8 | MLOps (MLflow, model registry, monitoring) | ⬜ Not started |
 | 9 | Application (FastAPI + React) | ⬜ Not started |
@@ -311,6 +311,37 @@ defensive player stats aggregated to team level), true per-drive
 red-zone efficiency, and weather data (no provider). None of these
 block Phase 4 (ML training), which can now start against a genuinely
 complete team-level feature table.
+
+---
+
+## Continuous integration (a slice of Phase 6)
+
+Two workflows, split along the line the test suite already draws between
+offline and live-data tests:
+
+```
+.github/workflows/tests.yml         PR gate: the 52 offline tests, Python 3.11 + 3.12
+.github/workflows/integration.yml   Weekly + on-demand: the 6 live nflverse tests
+```
+
+**The PR gate is offline-only on purpose.** `pytest -m "not integration"`
+needs no network and no database — `src/db.py` defaults to a local SQLite
+file — so a nflverse outage or a slow 40-80MB play-by-play download can
+never make an unrelated PR look broken. Verified by running the suite with
+the network blackholed: 52/52 still pass.
+
+**The live tests get a schedule instead of a gate**, because upstream data
+changes are a real recurring failure mode here that offline tests are
+structurally incapable of catching — both times it happened, only live
+data caught it (nflverse dropping `date_modified`, per `DECISIONS.md` #5;
+`get_plays()` never having worked at all, per #6). A Monday-morning run
+turns "discovered while building the next slice" into "discovered the
+Monday after upstream changed." `workflow_dispatch` is enabled so a slice
+can still be verified against live data on demand.
+
+This covers CI only. The Phase 6 design-doc work — scheduled *pipeline*
+runs (weekly ingestion, retraining cadence per `DECISIONS.md` #4) — is
+still ahead, and needs Phase 4 to exist first.
 
 ---
 

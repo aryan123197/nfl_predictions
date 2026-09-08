@@ -1,0 +1,49 @@
+# Live-data canary -- runs the integration tests against real nflverse data.
+#
+# Deliberately NOT a PR gate. These tests hit an external source that this
+# project doesn't control, so a nflverse outage would block unrelated PRs;
+# tests.yml covers PRs with the offline suite instead.
+#
+# But they earn a schedule of their own, because upstream data changes are
+# a real, recurring failure mode here and offline tests are structurally
+# incapable of catching them -- both times it happened, only live data
+# caught it:
+#   - nflverse dropped `date_modified` from the 2025 injuries file, which
+#     would have silently zeroed every injury feature (DECISIONS.md #5).
+#   - get_plays() never worked at all -- _fetch_csv parsed the gzipped
+#     play-by-play file as raw text (DECISIONS.md #6).
+# A weekly run turns "discovered while building the next slice" into
+# "discovered the Monday after upstream changed".
+name: integration
+
+on:
+  schedule:
+    # Mondays 12:00 UTC -- after the weekend's games have settled into
+    # nflverse, so a failure points at the data source, not at a mid-update
+    # snapshot.
+    - cron: "0 12 * * 1"
+  workflow_dispatch: # so a slice can be verified against live data on demand
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    # Play-by-play is a 40-80MB download and parse; the default 360-minute
+    # timeout would let a hung fetch burn the runner for hours.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run integration tests against live nflverse data
+        run: pytest -m integration -v
