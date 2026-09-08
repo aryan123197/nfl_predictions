@@ -215,6 +215,8 @@ def _upsert_players(engine: Engine, players: pd.DataFrame) -> int:
     table = qualified_table("silver", "players")
     is_postgres = engine.dialect.name != "sqlite"
 
+    players = players.drop_duplicates(subset=["player_id"], keep="last")
+
     data = []
     records = []
     for _, row in players.iterrows():
@@ -275,6 +277,8 @@ def _upsert_injuries(engine: Engine, injuries: pd.DataFrame, source: str) -> int
         return 0
     table = qualified_table("silver", "injuries")
     is_postgres = engine.dialect.name != "sqlite"
+
+    injuries = injuries.drop_duplicates(subset=["id"], keep="last")
 
     data = []
     records = []
