@@ -19,7 +19,7 @@ This README tracks **implementation status** against that design.
 | 4 | ML training (XGBoost baseline) | 🟡 **Win probability working** — score/spread prediction deferred |
 | 5 | Walk-forward backtesting (2025) | ✅ **Working** — week-by-week simulation with Decision #1 promotion gate & Decision #4 cadence |
 | 6 | Automation (GitHub Actions) | ✅ **Working** — scheduled data & prediction pipeline + weekly retraining & promotion gate |
-| 7 | Live 2026 data connection | ⬜ Not started |
+| 7 | Live 2026 data connection & monitoring | ✅ **Working** — dynamic schedule resolver, metadata.pipeline_state, and system health audit |
 | 8 | MLOps (MLflow, model registry, monitoring) | ⬜ Not started |
 | 9 | Application (FastAPI + React) | 🟡 **Slice A working** — read-only API + React UI over silver/gold; prediction panel wired |
 | 10 | Advanced learning (online/RL) | ⬜ Not started (explicit non-goal for V1) |
@@ -462,6 +462,38 @@ python -m src.pipeline.run_retrain --season 2025 --week 2 --force-retrain
 
 ---
 
+### Phase 7 — Live 2026 Season Automation & Health Monitoring
+Continuous live season operation support (design doc §31, §32, §37, §39): dynamic season and week resolution, persistent pipeline state tracking in `metadata.pipeline_state`, and comprehensive data quality and model sanity audits.
+
+```
+schema/008_state.sql                  metadata.pipeline_state schema definition
+src/pipeline/schedule_resolver.py     Point-in-time dynamic season & week resolution
+src/pipeline/health_check.py          Diagnostic health & data quality monitoring engine
+tests/test_health_and_state.py        5 offline tests: calendar logic, state CRUD, sanity checks
+```
+
+**Usage:**
+```bash
+# Run system health audit on active/current season and week
+python -m src.pipeline.health_check
+
+# Audit specific season/week
+python -m src.pipeline.health_check --season 2024 --week 1
+
+# Run zero-touch live pipeline with automatic season/week detection and health audit
+python -m src.pipeline.run_pipeline --check-health
+```
+
+**Capabilities:**
+1. **Dynamic Season & Active Week Resolution (`src/pipeline/schedule_resolver.py`)**:
+   - Resolves active NFL season year (March–February rollover) and current upcoming week from DB game dates or calendar fallback.
+2. **Pipeline State Tracking (`metadata.pipeline_state`)**:
+   - Stores `current_season`, `current_week`, `last_successful_run_id`, `last_run_at`, `status`, and payload metadata JSON.
+3. **Data Quality & Health Auditing (`src/pipeline/health_check.py`)**:
+   - Validates silver team count (32), duplicate game IDs, Elo rating bounds (1000–2000), null feature rates in `gold.game_features`, probability sanity ($[0, 1]$ bounds and $P(\text{Home}) + P(\text{Away}) = 1.0$), and recent pipeline run success rate.
+
+---
+
 ## Next steps
 
-**Phase 7** (connecting live 2026 data sources) and **Phase 8** (MLOps with MLflow and advanced monitoring) are the next milestones on the roadmap. Model spread/margin predictions and player-level feature extensions (design doc §15) remain available as follow-up modeling enhancements.
+**Phase 8** (MLOps with MLflow and advanced drift monitoring) and model spread/margin predictions and player-level feature extensions (design doc §15) are the next milestones on the roadmap.

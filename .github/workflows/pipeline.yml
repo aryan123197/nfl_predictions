@@ -68,4 +68,4 @@ jobs:
           if [ "${{ inputs.skip_plays }}" = "true" ]; then
             ARGS="$ARGS --skip-plays"
           fi
-          python -m src.pipeline.run_pipeline $ARGS
+          python -m src.pipeline.run_pipeline $ARGS --check-health

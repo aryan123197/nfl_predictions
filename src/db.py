@@ -95,7 +95,79 @@ def to_sql_target(schema: str, table: str) -> dict:
 
 SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql", "003_gold.sql",
                 "004_silver_plays.sql", "005_gold_rolling_stats.sql", "006_ml.sql",
-                "007_gold_player_stats.sql"]
+                "007_gold_player_stats.sql", "008_state.sql"]
+
+
+def get_pipeline_state(pipeline_name: str = "nfl_data_pipeline") -> dict | None:
+    """Retrieve current state for a pipeline."""
+    engine = get_engine()
+    table = qualified_table("metadata", "pipeline_state")
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(f"SELECT pipeline_name, current_season, current_week, last_successful_run_id, last_run_at, status, metadata_json FROM {table} WHERE pipeline_name = :name"),
+            {"name": pipeline_name},
+        ).fetchone()
+        if not row:
+            return None
+        return dict(row._mapping)
+
+
+def update_pipeline_state(
+    pipeline_name: str = "nfl_data_pipeline",
+    current_season: int | None = None,
+    current_week: int | None = None,
+    last_successful_run_id: int | None = None,
+    status: str = "idle",
+    metadata_json: str | None = None,
+) -> None:
+    """Upsert pipeline state record."""
+    from datetime import datetime, timezone
+    engine = get_engine()
+    table = qualified_table("metadata", "pipeline_state")
+    now_ts = datetime.now(timezone.utc) if engine.dialect.name != "sqlite" else datetime.now(timezone.utc).isoformat()
+    with engine.begin() as conn:
+        existing = conn.execute(
+            text(f"SELECT pipeline_name FROM {table} WHERE pipeline_name = :name"),
+            {"name": pipeline_name},
+        ).fetchone()
+        if existing:
+            conn.execute(
+                text(f"""
+                    UPDATE {table} SET
+                        current_season = COALESCE(:current_season, current_season),
+                        current_week = COALESCE(:current_week, current_week),
+                        last_successful_run_id = COALESCE(:last_successful_run_id, last_successful_run_id),
+                        last_run_at = :last_run_at,
+                        status = :status,
+                        metadata_json = COALESCE(:metadata_json, metadata_json)
+                    WHERE pipeline_name = :name
+                """),
+                {
+                    "name": pipeline_name,
+                    "current_season": current_season,
+                    "current_week": current_week,
+                    "last_successful_run_id": last_successful_run_id,
+                    "last_run_at": now_ts,
+                    "status": status,
+                    "metadata_json": metadata_json,
+                },
+            )
+        else:
+            conn.execute(
+                text(f"""
+                    INSERT INTO {table} (pipeline_name, current_season, current_week, last_successful_run_id, last_run_at, status, metadata_json)
+                    VALUES (:name, :current_season, :current_week, :last_successful_run_id, :last_run_at, :status, :metadata_json)
+                """),
+                {
+                    "name": pipeline_name,
+                    "current_season": current_season,
+                    "current_week": current_week,
+                    "last_successful_run_id": last_successful_run_id,
+                    "last_run_at": now_ts,
+                    "status": status,
+                    "metadata_json": metadata_json,
+                },
+            )
 
 
 def init_schema(force: bool = False) -> None:
@@ -111,7 +183,7 @@ def init_schema(force: bool = False) -> None:
         try:
             with engine.connect() as conn:
                 res = conn.execute(
-                    text("SELECT 1 FROM information_schema.tables WHERE table_schema = 'ml' AND table_name = 'predictions'")
+                    text("SELECT 1 FROM information_schema.columns WHERE table_schema = 'metadata' AND table_name = 'pipeline_state' AND column_name = 'current_season'")
                 ).fetchone()
                 if res:
                     return

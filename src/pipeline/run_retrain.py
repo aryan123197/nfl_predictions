@@ -41,6 +41,7 @@ from src.ml.train import (
     XGB_REGRESSOR_PARAMS,
     split_train_holdout,
 )
+from src.pipeline.schedule_resolver import get_active_week, get_current_season
 from src.transform import game_results_transform, gold_transform
 
 logging.basicConfig(
@@ -99,6 +100,12 @@ def run(
     """Execute weekly ML retraining, candidate evaluation, and promotion gate."""
     init_schema()
     engine = get_engine()
+
+    if season is None:
+        season = get_current_season()
+    if week is None:
+        week = get_active_week(engine=engine, season=season)
+
     run_id = start_run("model_retraining_pipeline")
 
     logger.info("=== Starting Weekly ML Retraining Pipeline [run_id=%s, season=%s, week=%s] ===", run_id, season, week)

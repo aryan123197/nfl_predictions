@@ -101,11 +101,7 @@ def run() -> int:
                 sql = f"INSERT INTO {table} ({col_list}) VALUES %s"
                 data = [tuple(r[c] for c in cols) for r in results.to_dict(orient="records")]
                 execute_values(cur, sql, data, page_size=2000)
-        else:
-            conn.execute(text(f"DELETE FROM {table}"))
-            if not results.empty:
-                results = results.where(pd.notna(results), None)
-                cols = list(results.columns)
+            else:
                 placeholders = ", ".join(f":{c}" for c in cols)
                 col_list = ", ".join(cols)
                 conn.execute(text(f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"),
