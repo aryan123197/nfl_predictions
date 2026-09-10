@@ -177,18 +177,8 @@ def get_team(team_id: str) -> schemas.Team:
 
 @app.get("/model/performance", response_model=schemas.ModelPerformance, tags=["model"])
 def model_performance() -> schemas.ModelPerformance:
-    # Deliberately reports unavailability rather than zeros. Phase 4/5 will
-    # fill this from evaluated predictions vs. actual results (design doc
-    # section 23), against the promotion criteria in DECISIONS.md #1.
-    if not predictions_repo.predictions_available():
-        return schemas.ModelPerformance(
-            available=False,
-            reason="No model has been trained yet (Phase 4 not landed).",
-        )
-    return schemas.ModelPerformance(
-        available=False,
-        reason="Predictions exist but evaluation metrics are not computed yet (Phase 5).",
-    )
+    perf = predictions_repo.compute_model_performance()
+    return schemas.ModelPerformance(**perf)
 
 
 @app.get("/players/{player_id}", tags=["players"])
@@ -199,9 +189,21 @@ def get_player(player_id: str):
     )
 
 
-@app.get("/model/explanation/{game_id}", tags=["model"])
-def get_explanation(game_id: str):
-    raise HTTPException(
-        status_code=501,
-        detail="SHAP explanations require a trained model (Phase 4) and Phase 8 explainability work.",
-    )
+@app.get("/model/explanation/{game_id}", response_model=schemas.PredictionExplanation, tags=["model"])
+def get_explanation(game_id: str) -> schemas.PredictionExplanation:
+    explanation = predictions_repo.get_game_explanation(game_id)
+    if explanation is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No explanation available for game {game_id!r}. Either the game does not exist or no model is loaded.",
+        )
+    return schemas.PredictionExplanation(**explanation)
+
+
+@app.get("/monitoring/health", response_model=schemas.SystemHealthAudit, tags=["meta"])
+def system_health_audit() -> schemas.SystemHealthAudit:
+    from src.pipeline.health_check import run_health_check
+    report = run_health_check()
+    return schemas.SystemHealthAudit(**report.to_dict())
+
+

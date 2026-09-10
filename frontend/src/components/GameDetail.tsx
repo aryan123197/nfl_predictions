@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { Game } from "../types";
+import ExplanationPanel from "./ExplanationPanel";
 import FeatureComparison from "./FeatureComparison";
 import PredictionPanel from "./PredictionPanel";
 import { ErrorState, EmptyState } from "./States";
@@ -55,7 +56,13 @@ export default function GameDetail({ predictionsAvailable }: { predictionsAvaila
       </section>
 
       <PredictionPanel game={game} predictionsAvailable={predictionsAvailable} />
+      <ExplanationPanel
+        gameId={game.game_id}
+        homeTeamId={game.home_team_id}
+        awayTeamId={game.away_team_id}
+      />
       <FeatureComparison game={game} />
     </>
   );
 }
+

@@ -245,17 +245,62 @@ def test_latest_prediction_wins_when_a_game_is_repredicted(client):
             )
 
     assert client.get("/predictions/2025_01_BUF_KC").json()["model_version"] == "v0.2"
-    # The batch path (week view) must agree with the single-game path --
-    # they're separate queries, and a mismatch would show one number in the
-    # list and a different one on the detail page.
     games = client.get("/games", params={"season": 2025}).json()
     predicted = [g for g in games if g["prediction"]][0]
     assert predicted["prediction"]["model_version"] == "v0.2"
 
 
-# -- specified-but-not-built endpoints --------------------------------------
+def test_model_performance_with_evaluated_games(client):
+    """When predictions exist on completed games, /model/performance computes live metrics."""
+    import src.db as db
 
-def test_unbuilt_endpoints_return_501_not_404(client):
-    """501 says "specified, not built yet"; 404 would suggest it was dropped."""
+    table = db.qualified_table("ml", "predictions")
+    with db.get_engine().begin() as conn:
+        conn.execute(
+            text(
+                f"CREATE TABLE IF NOT EXISTS {table} ("
+                "prediction_id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT, "
+                "model_version TEXT, prediction_timestamp TEXT, "
+                "home_win_probability REAL, away_win_probability REAL, "
+                "predicted_home_score REAL, predicted_away_score REAL, "
+                "predicted_margin REAL, market_spread REAL)"
+            )
+        )
+        # 2025_01_BUF_KC has home_score=27, away_score=23 (KC won by 4)
+        conn.execute(
+            text(
+                f"INSERT INTO {table} (game_id, model_version, prediction_timestamp, "
+                "home_win_probability, away_win_probability, predicted_home_score, "
+                "predicted_away_score, predicted_margin, market_spread) VALUES "
+                "('2025_01_BUF_KC', 'v0.1', '2025-09-06T12:00:00', 0.68, 0.32, 27.0, 23.0, 4.0, -2.5)"
+            )
+        )
+
+    res = client.get("/model/performance")
+    assert res.status_code == 200
+    perf = res.json()
+    assert perf["available"] is True
+    assert perf["games_evaluated"] == 1
+    assert perf["accuracy"] == 1.0
+    assert perf["model_version"] == "v0.1"
+    assert perf["mae_margin"] == 0.0
+
+
+def test_monitoring_health_endpoint(client):
+    res = client.get("/monitoring/health")
+    assert res.status_code == 200
+    health = res.json()
+    assert "status" in health
+    assert "passed_count" in health
+    assert "warnings_count" in health
+    assert "errors_count" in health
+
+
+def test_explanation_endpoint_returns_404_when_no_game(client):
+    res = client.get("/model/explanation/unknown_game_id")
+    assert res.status_code == 404
+
+
+def test_unbuilt_player_endpoint_returns_501(client):
     assert client.get("/players/00-0033873").status_code == 501
-    assert client.get("/model/explanation/2025_01_BUF_KC").status_code == 501
+

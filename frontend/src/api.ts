@@ -6,7 +6,14 @@
  * origin. Nothing here hardcodes a host, so no build-time API URL is needed.
  */
 
-import type { Game, Health, ModelPerformance, Team } from "./types";
+import type {
+  Game,
+  Health,
+  ModelPerformance,
+  PredictionExplanation,
+  SystemHealthAudit,
+  Team,
+} from "./types";
 
 const BASE = "/api";
 
@@ -60,4 +67,8 @@ export const api = {
   game: (gameId: string) => get<Game>(`/games/${encodeURIComponent(gameId)}`),
   team: (teamId: string) => get<Team>(`/teams/${encodeURIComponent(teamId)}`),
   modelPerformance: () => get<ModelPerformance>("/model/performance"),
+  explanation: (gameId: string) =>
+    get<PredictionExplanation>(`/model/explanation/${encodeURIComponent(gameId)}`),
+  systemHealth: () => get<SystemHealthAudit>("/monitoring/health"),
 };
+

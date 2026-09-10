@@ -77,5 +77,39 @@ export interface ModelPerformance {
   accuracy: number | null;
   brier_score: number | null;
   log_loss: number | null;
+  mae_margin: number | null;
   ats_accuracy: number | null;
 }
+
+export interface ExplanationFactor {
+  feature: string;
+  display_name: string;
+  value: number | null;
+  contribution: number;
+  description: string;
+}
+
+export interface PredictionExplanation {
+  game_id: string;
+  home_team_id: string;
+  away_team_id: string;
+  favored_team: string;
+  win_probability: number;
+  home_win_probability: number;
+  away_win_probability: number;
+  base_probability: number;
+  top_positive_factors: ExplanationFactor[];
+  top_negative_factors: ExplanationFactor[];
+}
+
+export interface SystemHealthAudit {
+  status: string;
+  passed_count: number;
+  warnings_count: number;
+  errors_count: number;
+  passed: string[];
+  warnings: string[];
+  errors: string[];
+  metrics: Record<string, unknown>;
+}
+

@@ -15,7 +15,7 @@ absence, and no layer substitutes a plausible-looking zero.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -125,7 +125,31 @@ class ModelPerformance(BaseModel):
     accuracy: Optional[float] = None
     brier_score: Optional[float] = None
     log_loss: Optional[float] = None
+    mae_margin: Optional[float] = None
     ats_accuracy: Optional[float] = None
+
+
+class ExplanationFactor(BaseModel):
+    feature: str
+    display_name: str
+    value: Optional[float] = None
+    contribution: float
+    description: str
+
+
+class PredictionExplanation(BaseModel):
+    """TreeSHAP feature attributions for a game prediction (Design Doc §36)."""
+
+    game_id: str
+    home_team_id: str
+    away_team_id: str
+    favored_team: str
+    win_probability: float
+    home_win_probability: float
+    away_win_probability: float
+    base_probability: float
+    top_positive_factors: list[ExplanationFactor] = []
+    top_negative_factors: list[ExplanationFactor] = []
 
 
 class Health(BaseModel):
@@ -133,3 +157,14 @@ class Health(BaseModel):
     warehouse_ready: bool = Field(description="False when the pipelines have never run against this database")
     predictions_available: bool = Field(description="False until Phase 4 lands ml.predictions")
     seasons: list[int] = []
+
+
+class SystemHealthAudit(BaseModel):
+    status: str
+    passed_count: int
+    warnings_count: int
+    errors_count: int
+    passed: list[str] = []
+    warnings: list[str] = []
+    errors: list[str] = []
+    metrics: dict[str, Any] = {}
