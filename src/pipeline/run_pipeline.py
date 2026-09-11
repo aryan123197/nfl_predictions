@@ -84,11 +84,12 @@ def run(
         # 3. Ingest & Transform Play-by-Play (if not skipped)
         if not skip_plays:
             logger.info("[Step 3/5] Ingesting and transforming Play-by-Play...")
-            pbp_ingested = run_pbp_ingestion(provider, season=season)
-            pbp_transformed = plays_transform.run(season=season)
-            total_records += pbp_ingested + pbp_transformed
+            pbp_ingested = run_pbp_ingestion(provider, season=season) or 0
+            pbp_transformed = plays_transform.run(season=season) or 0
+            total_records += (pbp_ingested or 0) + (pbp_transformed or 0)
         else:
             logger.info("[Step 3/5] Skipping Play-by-Play per configuration")
+
 
         # 4. Rebuild Gold Layer (Elo, rolling stats, injury impact, game_features, game_results)
         logger.info("[Step 4/5] Rebuilding Gold feature tables...")

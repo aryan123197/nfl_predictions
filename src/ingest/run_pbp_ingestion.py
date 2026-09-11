@@ -78,7 +78,7 @@ def _replace_plays(df: pd.DataFrame, source: str, run_id: int, season: int) -> i
     return len(df)
 
 
-def run(provider: NFLDataProvider, season: int) -> None:
+def run(provider: NFLDataProvider, season: int) -> int:
     init_schema()
     run_id = start_run("nfl_pbp_pipeline")
 
@@ -89,6 +89,7 @@ def run(provider: NFLDataProvider, season: int) -> None:
         count = _replace_plays(plays, source=provider.name, run_id=run_id, season=season)
         finish_run(run_id, status="success", records_processed=count)
         logger.info("Pipeline run %s completed successfully (%d play rows)", run_id, count)
+        return count
 
     except ProviderError as exc:
         logger.error("Provider error: %s", exc)
@@ -98,6 +99,7 @@ def run(provider: NFLDataProvider, season: int) -> None:
         logger.exception("Unexpected pipeline failure")
         finish_run(run_id, status="failed", records_processed=0, error_message=str(exc))
         raise
+
 
 
 def main() -> None:
