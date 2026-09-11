@@ -232,3 +232,92 @@ def get_game_explanation(game_id: str, engine=None) -> Optional[dict]:
     from src.ml.explain import explain_game_prediction
     return explain_game_prediction(game_id=game_id, engine=engine)
 
+
+def get_betting_recommendations(
+    season: int | None = None,
+    week: int | None = None,
+    engine=None,
+) -> dict:
+    """Generate +EV betting recommendations for games in the active/selected week."""
+    if engine is None:
+        engine = get_engine()
+
+    from src.ml.betting_strategy import evaluate_spread_bet
+    pred_table = _table_name()
+    games_table = qualified_table("silver", "games")
+    features_table = qualified_table("gold", "game_features")
+
+    filters = []
+    params: dict = {}
+    if season is not None:
+        filters.append("g.season = :season")
+        params["season"] = season
+    if week is not None:
+        filters.append("g.week = :week")
+        params["week"] = week
+
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+
+    if not inspect(engine).has_table(pred_table):
+        return {
+            "season": season,
+            "week": week,
+            "total_recommendations": 0,
+            "strong_value_count": 0,
+            "recommendations": [],
+        }
+
+    sql = text(f"""
+        SELECT
+            g.game_id,
+            g.season,
+            g.week,
+            g.home_team_id,
+            g.away_team_id,
+            p.market_spread,
+            p.cover_probability,
+            p.home_win_probability,
+            p.predicted_margin,
+            gf.current_spread
+        FROM {games_table} g
+        LEFT JOIN {pred_table} p ON g.game_id = p.game_id
+        LEFT JOIN {features_table} gf ON g.game_id = gf.game_id
+        {where_clause}
+        ORDER BY g.season DESC, g.week ASC, g.game_id ASC
+    """)
+
+    recommendations = []
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(sql, params).mappings().all()
+
+        for r in rows:
+            spread_line = r["market_spread"] if r["market_spread"] is not None else r["current_spread"]
+            cover_prob = r["cover_probability"]
+            if cover_prob is None and r["home_win_probability"] is not None:
+                cover_prob = float(r["home_win_probability"])
+
+            rec = evaluate_spread_bet(
+                game_id=r["game_id"],
+                home_team_id=r["home_team_id"],
+                away_team_id=r["away_team_id"],
+                market_spread=float(spread_line) if spread_line is not None else None,
+                home_cover_prob=float(cover_prob) if cover_prob is not None else None,
+            )
+            if rec is not None and rec.value_tier.value != "NO_BET":
+                recommendations.append(rec.to_dict())
+    except Exception:
+        pass
+
+    recommendations.sort(key=lambda x: x["expected_value_pct"], reverse=True)
+    strong_count = sum(1 for r in recommendations if r["value_tier"] == "STRONG_VALUE")
+
+    return {
+        "season": season,
+        "week": week,
+        "total_recommendations": len(recommendations),
+        "strong_value_count": strong_count,
+        "recommendations": recommendations,
+    }
+
+

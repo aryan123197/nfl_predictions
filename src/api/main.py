@@ -207,3 +207,13 @@ def system_health_audit() -> schemas.SystemHealthAudit:
     return schemas.SystemHealthAudit(**report.to_dict())
 
 
+@app.get("/betting/recommendations", response_model=schemas.BettingSlate, tags=["betting"])
+def betting_recommendations(
+    season: Optional[int] = Query(None, description="Filter to season"),
+    week: Optional[int] = Query(None, description="Filter to week"),
+) -> schemas.BettingSlate:
+    slate = predictions_repo.get_betting_recommendations(season=season, week=week)
+    return schemas.BettingSlate(**slate)
+
+
+

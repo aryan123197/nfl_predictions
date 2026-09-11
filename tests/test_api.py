@@ -304,3 +304,12 @@ def test_explanation_endpoint_returns_404_when_no_game(client):
 def test_unbuilt_player_endpoint_returns_501(client):
     assert client.get("/players/00-0033873").status_code == 501
 
+
+def test_betting_recommendations_endpoint(client):
+    res = client.get("/betting/recommendations", params={"season": 2025, "week": 1})
+    assert res.status_code == 200
+    slate = res.json()
+    assert "total_recommendations" in slate
+    assert "recommendations" in slate
+
+

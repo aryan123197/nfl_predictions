@@ -113,3 +113,29 @@ export interface SystemHealthAudit {
   metrics: Record<string, unknown>;
 }
 
+export interface BettingRecommendation {
+  game_id: string;
+  target_team_id: string;
+  bet_type: string;
+  market_line: number;
+  model_probability: number;
+  implied_probability: number;
+  expected_value_pct: number;
+  edge_pct: number;
+  value_tier: "STRONG_VALUE" | "MODERATE_VALUE" | "MARGINAL_VALUE" | "NO_BET";
+  full_kelly_pct: number;
+  half_kelly_pct: number;
+  quarter_kelly_pct: number;
+  recommended_units: number;
+  analysis: string;
+}
+
+export interface BettingSlate {
+  season: number | null;
+  week: number | null;
+  total_recommendations: number;
+  strong_value_count: number;
+  recommendations: BettingRecommendation[];
+}
+
+

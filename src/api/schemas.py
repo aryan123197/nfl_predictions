@@ -168,3 +168,29 @@ class SystemHealthAudit(BaseModel):
     warnings: list[str] = []
     errors: list[str] = []
     metrics: dict[str, Any] = {}
+
+
+class BettingRecommendation(BaseModel):
+    game_id: str
+    target_team_id: str
+    bet_type: str = "SPREAD"
+    market_line: float
+    model_probability: float
+    implied_probability: float
+    expected_value_pct: float
+    edge_pct: float
+    value_tier: str
+    full_kelly_pct: float
+    half_kelly_pct: float
+    quarter_kelly_pct: float
+    recommended_units: float
+    analysis: str
+
+
+class BettingSlate(BaseModel):
+    season: Optional[int] = None
+    week: Optional[int] = None
+    total_recommendations: int
+    strong_value_count: int
+    recommendations: list[BettingRecommendation] = []
+

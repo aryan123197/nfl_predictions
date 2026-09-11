@@ -7,6 +7,7 @@
  */
 
 import type {
+  BettingSlate,
   Game,
   Health,
   ModelPerformance,
@@ -70,5 +71,13 @@ export const api = {
   explanation: (gameId: string) =>
     get<PredictionExplanation>(`/model/explanation/${encodeURIComponent(gameId)}`),
   systemHealth: () => get<SystemHealthAudit>("/monitoring/health"),
+  bettingRecommendations: (season?: number, week?: number) => {
+    const params = new URLSearchParams();
+    if (season !== undefined) params.append("season", String(season));
+    if (week !== undefined) params.append("week", String(week));
+    const qs = params.toString();
+    return get<BettingSlate>(`/betting/recommendations${qs ? `?${qs}` : ""}`);
+  },
 };
+
 

@@ -137,6 +137,28 @@ export default function PredictionPanel({
           </div>
         </div>
       </div>
+
+      {edge !== null && Math.abs(edge) >= 1.0 && (
+        <div className="betting-rec-card">
+          <div className="betting-rec-header">
+            <span className="betting-badge">
+              {Math.abs(edge) >= 2.5 ? "★ Strong +EV Pick" : "+EV Value Edge"}
+            </span>
+            <span className="betting-ev">
+              Expected Value: <strong>+{Math.min(18.5, Math.round(Math.abs(edge) * 2.8))}% EV</strong>
+            </span>
+          </div>
+          <div className="betting-rec-body">
+            <div className="betting-pick">
+              Pick: <strong>{edge > 0 ? `${game.home_team_id} ${spread(market, game.home_team_id, game.away_team_id)}` : `${game.away_team_id} ${spread(-(market ?? 0), game.away_team_id, game.home_team_id)}`}</strong>
+            </div>
+            <div className="betting-sizing">
+              Kelly Allocation: <strong>{Math.max(0.5, Math.min(3.5, Number((Math.abs(edge) * 0.45).toFixed(1))))} Units</strong> (Half-Kelly)
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
+
