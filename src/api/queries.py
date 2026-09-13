@@ -59,7 +59,11 @@ def warehouse_ready() -> bool:
     and found nothing", so /health can say which -- a fresh clone hitting an
     empty database should get a clear answer, not an opaque 500.
     """
-    return inspect(get_engine()).has_table(qualified_table("silver", "games"))
+    engine = get_engine()
+    if engine.dialect.name == "sqlite":
+        return inspect(engine).has_table(qualified_table("silver", "games"))
+    return inspect(engine).has_table("games", schema="silver")
+
 
 
 def list_games(season: Optional[int] = None, week: Optional[int] = None) -> list[dict]:

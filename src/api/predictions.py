@@ -59,7 +59,11 @@ def predictions_available() -> bool:
     would require a restart to notice.
     """
     engine = get_engine()
-    if not inspect(engine).has_table(_table_name()):
+    if engine.dialect.name == "sqlite":
+        has = inspect(engine).has_table(qualified_table("ml", "predictions"))
+    else:
+        has = inspect(engine).has_table("predictions", schema="ml")
+    if not has:
         return False
     try:
         with engine.connect() as conn:
@@ -67,6 +71,7 @@ def predictions_available() -> bool:
             return has_row is not None
     except Exception:
         return False
+
 
 
 def get_prediction(game_id: str) -> Optional[dict]:
@@ -258,7 +263,12 @@ def get_betting_recommendations(
 
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
 
-    if not inspect(engine).has_table(pred_table):
+    if engine.dialect.name == "sqlite":
+        has_table = inspect(engine).has_table(pred_table)
+    else:
+        has_table = inspect(engine).has_table("predictions", schema="ml")
+
+    if not has_table:
         return {
             "season": season,
             "week": week,
@@ -266,6 +276,7 @@ def get_betting_recommendations(
             "strong_value_count": 0,
             "recommendations": [],
         }
+
 
     sql = text(f"""
         SELECT
