@@ -290,9 +290,14 @@ def predict_upcoming_games(
     X = X.astype(float)
 
     probs = model.predict_proba(X)[:, 1]
-    home_scores, away_scores = model.predict_scores(X)
-    margins = model.predict_margin(X)
     market_spreads = df["current_spread"].astype(float)
+    # market_spreads must reach predict_scores/predict_margin, not just
+    # predict_cover_proba -- without it they silently fall back to the
+    # standalone margin_model instead of the market-anchored prediction, so
+    # predicted_margin/predicted_home_score/predicted_away_score disagreed
+    # with the market spread that cover_probability was computed against.
+    home_scores, away_scores = model.predict_scores(X, market_spreads=market_spreads)
+    margins = model.predict_margin(X, market_spreads=market_spreads)
     cover_probs = model.predict_cover_proba(X, market_spreads)
 
     pred_table = qualified_table("ml", "predictions")
