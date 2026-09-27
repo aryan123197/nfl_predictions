@@ -111,13 +111,24 @@ class NFLPredictionModel:
         return self.win_model.predict_proba(X)
 
     def predict_margin(self, X: pd.DataFrame, market_spreads: pd.Series | np.ndarray | None = None) -> np.ndarray:
+        # Predict the market spread directly rather than "market + a learned
+        # correction" (spread_residual_model). Measured across the full 2025
+        # walk-forward backtest (284 out-of-sample games), the correction was
+        # pure noise at every shrinkage scale from 0 to 1 -- MAE degraded
+        # monotonically as more of it was applied (9.68 pts at scale=0, i.e.
+        # market alone, up to 10.09 pts at scale=1, the old full correction)
+        # and ATS accuracy never moved off ~49.5% regardless of scale. A
+        # correction that never helps at any weight isn't underweighted
+        # signal, it's zero signal -- so the market spread is a better
+        # estimate of the actual margin than anything this model can add to
+        # it. spread_residual_model is still trained/stored (harmless, and
+        # kept for anyone comparing against it later) but no longer used here.
         pred = self.margin_model.predict(X)
-        if self.spread_residual_model is not None and market_spreads is not None:
+        if market_spreads is not None:
             spreads = pd.Series(market_spreads).values
             has_spread = pd.notna(spreads)
             if np.any(has_spread):
-                delta = self.spread_residual_model.predict(X)
-                pred = np.where(has_spread, spreads + delta, pred)
+                pred = np.where(has_spread, spreads, pred)
         return pred
 
     def predict_total(self, X: pd.DataFrame) -> np.ndarray:
