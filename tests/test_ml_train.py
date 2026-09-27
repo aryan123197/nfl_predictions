@@ -86,6 +86,10 @@ def isolated_db(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setattr(db_module, "_engine", None)
     monkeypatch.setattr(db_module, "_SessionLocal", None)
+    # ml_train.run() calls save_model(), which writes to MODELS_DIR -- without
+    # this, every run here would leave a real model.joblib/metadata.json
+    # behind in the project's actual models/ directory.
+    monkeypatch.setattr(ml_train, "MODELS_DIR", tmp_path / "models")
     yield db_path
 
 
