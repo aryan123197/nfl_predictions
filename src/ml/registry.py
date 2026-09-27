@@ -7,6 +7,7 @@ champion model (design doc sections 21, 27, 28).
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 from datetime import datetime, timezone
@@ -48,14 +49,60 @@ def get_champion_model_path() -> Path | None:
     return None
 
 
+def _load_champion_from_db() -> tuple[NFLPredictionModel | None, dict[str, Any] | None]:
+    """The source of truth: metadata.model_artifacts, keyed by is_champion.
+
+    Local disk (models/champion/) is a best-effort mirror for local dev
+    convenience, not where a production caller should ever have to look --
+    GitHub Actions runners are ephemeral and models/ is gitignored, so a
+    disk-only champion is discarded the moment each scheduled job ends
+    (see DECISIONS.md on why this table exists). Every environment reads
+    the same row here, whether it's a laptop or a CI runner.
+    """
+    engine = get_engine()
+    init_schema()
+    table = qualified_table("metadata", "model_artifacts")
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(f"SELECT model_version, artifact, metadata_json FROM {table} WHERE is_champion = :true"),
+                {"true": True if engine.dialect.name != "sqlite" else 1},
+            ).fetchone()
+    except Exception as e:
+        logger.error("Failed to query champion artifact from database: %s", e)
+        return None, None
+
+    if row is None:
+        return None, None
+
+    model_version, artifact_bytes, metadata_json = row
+    try:
+        if isinstance(artifact_bytes, memoryview):
+            artifact_bytes = artifact_bytes.tobytes()
+        model = joblib.load(io.BytesIO(artifact_bytes))
+        metadata = json.loads(metadata_json) if metadata_json else {}
+        logger.info("Loaded champion model %s from database", model_version)
+        return model, metadata
+    except Exception as e:
+        logger.error("Failed to deserialize champion artifact %s from database: %s", model_version, e)
+        return None, None
+
+
 def load_champion_model() -> tuple[NFLPredictionModel | None, dict[str, Any] | None]:
     """Load the active champion NFLPredictionModel and its metadata.
 
     Returns (None, None) if no champion model has been registered yet.
     """
+    model, metadata = _load_champion_from_db()
+    if model is not None:
+        return model, metadata
+
+    # Local-disk fallback, for a dev machine working against a database
+    # that predates metadata.model_artifacts (or is briefly unreachable).
+    # Not relied on in production: models/ is gitignored and does not
+    # survive a fresh CI checkout.
     model_path = get_champion_model_path()
     if not model_path:
-        # Fallback: check if any valid model exists under MODELS_DIR
         if not MODELS_DIR.exists():
             return None, None
         candidate_dirs = [
@@ -64,7 +111,6 @@ def load_champion_model() -> tuple[NFLPredictionModel | None, dict[str, Any] | N
         ]
         if not candidate_dirs:
             return None, None
-        # Use latest directory by timestamp/alphabetical order
         candidate_dirs.sort(key=lambda d: d.name, reverse=True)
         model_path = candidate_dirs[0] / "model.joblib"
         metadata_path = candidate_dirs[0] / "metadata.json"
@@ -74,7 +120,7 @@ def load_champion_model() -> tuple[NFLPredictionModel | None, dict[str, Any] | N
                 metadata = json.load(f)
         try:
             model = joblib.load(model_path)
-            logger.info("Loaded fallback model from %s", candidate_dirs[0].name)
+            logger.info("Loaded fallback model from local disk: %s", candidate_dirs[0].name)
             return model, metadata
         except Exception as e:
             logger.error("Failed to load fallback model: %s", e)
@@ -88,7 +134,7 @@ def load_champion_model() -> tuple[NFLPredictionModel | None, dict[str, Any] | N
 
     try:
         model = joblib.load(model_path)
-        logger.info("Loaded champion model %s", metadata.get("model_version", "unknown"))
+        logger.info("Loaded champion model %s from local disk", metadata.get("model_version", "unknown"))
         return model, metadata
     except Exception as e:
         logger.error("Failed to load champion model from %s: %s", model_path, e)
@@ -103,14 +149,11 @@ def register_champion(
 ) -> Path:
     """Register and promote a model as the active production champion.
 
-    Saves the model to its versioned directory (models/<model_version>)
-    and syncs the artifact and metadata to models/champion/.
+    Writes the artifact to metadata.model_artifacts (the source of truth --
+    durable across CI runs) and, best-effort, mirrors it to
+    models/<model_version>/ and models/champion/ on local disk for
+    convenience when developing/debugging on a machine.
     """
-    # 1. Save versioned copy
-    version_dir = MODELS_DIR / model_version
-    version_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, version_dir / "model.joblib")
-
     meta_version = {
         "model_version": model_version,
         "trained_at": datetime.now(timezone.utc).isoformat(),
@@ -124,27 +167,56 @@ def register_champion(
         },
         "margin_std": model.margin_std,
         "metrics": metrics,
-    }
-    with open(version_dir / "metadata.json", "w") as f:
-        json.dump(meta_version, f, indent=2)
-
-    # 2. Update champion directory
-    CHAMPION_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, CHAMPION_DIR / "model.joblib")
-
-    meta = {
-        "model_version": model_version,
-        "promoted_at": datetime.now(timezone.utc).isoformat(),
-        "git_commit": _git_commit(),
-        "feature_columns": FEATURE_COLUMNS,
-        "metrics": metrics,
         "training_metadata": training_metadata or {},
     }
-    with open(CHAMPION_DIR / "metadata.json", "w") as f:
-        json.dump(meta, f, indent=2)
+
+    buf = io.BytesIO()
+    joblib.dump(model, buf)
+    artifact_bytes = buf.getvalue()
+
+    engine = get_engine()
+    init_schema()
+    table = qualified_table("metadata", "model_artifacts")
+    with engine.begin() as conn:
+        # Clear the previous champion flag before inserting the new row --
+        # the partial unique index on is_champion (schema/009) would reject
+        # having two TRUE rows at once otherwise.
+        conn.execute(
+            text(f"UPDATE {table} SET is_champion = :false WHERE is_champion = :true"),
+            {"false": False if engine.dialect.name != "sqlite" else 0,
+             "true": True if engine.dialect.name != "sqlite" else 1},
+        )
+        conn.execute(
+            text(
+                f"INSERT INTO {table} (model_version, artifact, metadata_json, is_champion) "
+                "VALUES (:model_version, :artifact, :metadata_json, :is_champion)"
+            ),
+            {
+                "model_version": model_version,
+                "artifact": artifact_bytes,
+                "metadata_json": json.dumps(meta_version),
+                "is_champion": True if engine.dialect.name != "sqlite" else 1,
+            },
+        )
+
+    # Best-effort local-disk mirror -- convenient for local dev/debugging,
+    # never read back in production (see load_champion_model()).
+    try:
+        version_dir = MODELS_DIR / model_version
+        version_dir.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, version_dir / "model.joblib")
+        with open(version_dir / "metadata.json", "w") as f:
+            json.dump(meta_version, f, indent=2)
+
+        CHAMPION_DIR.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, CHAMPION_DIR / "model.joblib")
+        with open(CHAMPION_DIR / "metadata.json", "w") as f:
+            json.dump(meta_version, f, indent=2)
+    except OSError as e:
+        logger.warning("Could not mirror champion model to local disk (non-fatal): %s", e)
 
     logger.info("Successfully registered and promoted champion model: %s", model_version)
-    return version_dir
+    return MODELS_DIR / model_version
 
 
 def predict_upcoming_games(

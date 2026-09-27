@@ -95,7 +95,7 @@ def to_sql_target(schema: str, table: str) -> dict:
 
 SCHEMA_FILES = ["001_bronze.sql", "002_silver.sql", "003_gold.sql",
                 "004_silver_plays.sql", "005_gold_rolling_stats.sql", "006_ml.sql",
-                "007_gold_player_stats.sql", "008_state.sql"]
+                "007_gold_player_stats.sql", "008_state.sql", "009_model_artifacts.sql"]
 
 
 def get_pipeline_state(pipeline_name: str = "nfl_data_pipeline") -> dict | None:
@@ -183,7 +183,7 @@ def init_schema(force: bool = False) -> None:
         try:
             with engine.connect() as conn:
                 res = conn.execute(
-                    text("SELECT 1 FROM information_schema.columns WHERE table_schema = 'metadata' AND table_name = 'pipeline_state' AND column_name = 'current_season'")
+                    text("SELECT 1 FROM information_schema.tables WHERE table_schema = 'metadata' AND table_name = 'model_artifacts'")
                 ).fetchone()
                 if res:
                     return
@@ -248,6 +248,7 @@ def _translate_ddl_for_sqlite(sql: str) -> str:
     out = out.replace("DATE", "TEXT")
     out = out.replace("now()", "CURRENT_TIMESTAMP")
     out = out.replace("DOUBLE PRECISION", "REAL")
+    out = out.replace("BYTEA", "BLOB")
     # SQLite's ALTER TABLE ADD COLUMN has no IF NOT EXISTS clause (unlike
     # Postgres) -- stripped here, idempotency on rerun is instead handled
     # in apply_ddl_file() by swallowing the resulting "duplicate column

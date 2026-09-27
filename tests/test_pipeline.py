@@ -175,8 +175,11 @@ def _build_dummy_model() -> NFLPredictionModel:
     )
 
 
-def test_champion_registration_and_loading(tmp_path, monkeypatch):
+def test_champion_registration_and_loading(isolated_db, tmp_path, monkeypatch):
     """Verifies register_champion saves artifact bundle and load_champion_model reads it back."""
+    # register_champion/load_champion_model are backed by metadata.model_artifacts
+    # (see schema/009_model_artifacts.sql) -- without isolated_db this would read
+    # and write whatever real database DATABASE_URL points at.
     monkeypatch.setattr(registry, "MODELS_DIR", tmp_path / "models")
     monkeypatch.setattr(registry, "CHAMPION_DIR", tmp_path / "models" / "champion")
 
