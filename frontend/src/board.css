@@ -1,0 +1,270 @@
+/* Week board redesign ("Broadcast" direction).
+   Scoped under .board so it can land alongside the existing styles.css
+   without fighting it. Tokens mirror the design file 1a exactly. */
+
+.board {
+  --bg:        #0b0e13;
+  --bg-raised: #0d1117;
+  --bg-panel:  #0e141c;
+  --bg-card:   #0f151d;
+  --bg-card-h: #121924;
+  --bg-track:  #131a24;
+  --line:      #1e2530;
+  --line-soft: #161d27;
+  --line-row:  #141b24;
+  --text:      #e8ecf2;
+  --text-dim:  #b7c1d1;
+  --text-mute: #8c97a8;
+  --text-soft: #6b7688;
+  --text-idle: #5c6675;
+  --pos:       #45e0a8;   /* home / model side, strong edge */
+  --neg:       #2f5f8f;   /* away side */
+  --lean:      #7fb0ff;
+  --miss:      #a35f6a;
+
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  color: var(--text);
+  font-family: Barlow, system-ui, sans-serif;
+}
+
+/* Fonts: Barlow Condensed (display), Barlow (UI), IBM Plex Mono (data).
+   Add to index.html:
+   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"> */
+.board .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.board .cond { font-family: 'Barlow Condensed', 'Barlow', sans-serif; letter-spacing: .02em; }
+
+/* ---- masthead ---- */
+.board-masthead {
+  display: flex; align-items: center; gap: 18px;
+  padding: 18px 26px; background: var(--bg-raised);
+  border-bottom: 1px solid var(--line-soft);
+}
+.board-masthead h1 {
+  margin: 0; font-family: 'Barlow Condensed', sans-serif;
+  font-size: 26px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+}
+.board-masthead .tag {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--text-soft);
+}
+.board-spacer { flex: 1; }
+.board-pill {
+  display: flex; align-items: center; gap: 7px;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  padding: 6px 10px; border-radius: 999px; border: 1px solid #1d3d33;
+  background: #0e1a17; color: var(--pos);
+}
+.board-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.board-pill.warning { color: #ffb454; border-color: #3d331d; background: #1a1509; }
+.board-pill.error   { color: #ff8a7a; border-color: #3d2320; background: #1a0d0b; }
+.board-btn {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-mute); background: none;
+  border: 1px solid #232b38; padding: 6px 11px; border-radius: 7px; cursor: pointer;
+}
+.board-btn:hover { color: var(--text); border-color: #3a4557; }
+
+/* ---- week strip ---- */
+.week-strip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 26px; border-bottom: 1px solid var(--line-soft);
+}
+.week-strip .season { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .1em; color: var(--text-soft); }
+.week-strip .rule { width: 1px; height: 16px; background: #232b38; }
+.week-chip {
+  font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+  padding: 5px 10px; border: 0; border-radius: 6px; background: transparent;
+  color: #9aa5b6; cursor: pointer;
+}
+.week-chip:hover:not(:disabled) { background: #1a2230; }
+.week-chip[aria-current='true'] { background: var(--pos); color: var(--bg); }
+.week-chip:disabled { color: var(--text-idle); cursor: not-allowed; }
+.week-strip .count { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-soft); }
+
+/* ---- recap bar ---- */
+.recap-bar {
+  display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+  padding: 12px 26px; background: #0e131a; border-bottom: 1px solid var(--line-soft);
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-soft);
+}
+.recap-bar .label { color: #9aa5b6; }
+.recap-bar strong { color: var(--text); font-weight: 500; }
+.recap-bar .hit  { color: var(--pos); }
+.recap-bar .miss { color: var(--miss); }
+
+/* ---- section headers ---- */
+.board-section { padding: 22px 26px 8px; }
+.board-section:last-child { padding-bottom: 26px; }
+.board-eyebrow {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--text-soft);
+  margin-bottom: 12px;
+}
+
+/* ---- featured cards ---- */
+.featured-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.featured-card {
+  text-align: left; width: 100%; background: var(--bg-card);
+  border: 1px solid #1f2a38; border-radius: 11px; padding: 16px 17px; cursor: pointer;
+}
+.featured-card:hover { border-color: #35485e; background: var(--bg-card-h); }
+.featured-card .top {
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--text-soft);
+}
+.featured-card .prob { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 2px; }
+.featured-card .prob b {
+  font-family: 'Barlow Condensed', sans-serif; font-size: 46px; font-weight: 700;
+  line-height: .9; letter-spacing: -.01em; color: var(--text);
+}
+.featured-card .prob span {
+  font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 600;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.featured-card .teams { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-soft); }
+.featured-card .foot {
+  display: flex; justify-content: space-between;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-mute);
+}
+
+/* ---- probability bar ---- */
+.prob-split { display: flex; border-radius: 4px; overflow: hidden; background: var(--bg-track); }
+.prob-split > i { display: block; height: 100%; }
+.prob-split > i.away { background: var(--neg); }
+.prob-split > i.home { background: var(--pos); }
+.prob-split.sm { height: 6px; margin: 13px 0 11px; }
+.prob-split.row { height: 8px; width: 150px; }
+.prob-split.lg { height: 34px; border-radius: 7px; }
+.prob-split.lg > i {
+  display: flex; align-items: center;
+  font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600;
+}
+.prob-split.lg > i.away { justify-content: flex-start; padding-left: 12px; color: #dce9f7; }
+.prob-split.lg > i.home { justify-content: flex-end;  padding-right: 12px; color: #06120d; }
+
+/* ---- slate table ---- */
+.slate-head, .slate-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) 220px 104px 86px 64px;
+  gap: 12px; align-items: center;
+}
+.slate-head {
+  padding: 8px 6px; border-bottom: 1px solid #1a212c;
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--text-mute);
+}
+.slate-row {
+  width: 100%; text-align: left; background: none; border: 0;
+  border-bottom: 1px solid var(--line-row); padding: 11px 6px; cursor: pointer; color: inherit;
+}
+.slate-row:hover { background: var(--bg-card); }
+.slate-row .matchup { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.slate-row .code {
+  font-family: 'Barlow Condensed', sans-serif; font-size: 19px; font-weight: 600;
+  letter-spacing: .02em; color: #7d879a;
+}
+.slate-row .code.fav { color: var(--text); }
+.slate-row .num, .slate-row .cell {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-mute);
+}
+.slate-row .num.xs { font-size: 10px; }
+.slate-row .prob-cell { display: flex; align-items: center; gap: 9px; }
+.slate-row .prob-cell .fav-pct { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-dim); }
+.slate-row .right { text-align: right; }
+
+/* ---- tiers ---- */
+.tier-strong { color: var(--pos); }
+.tier-lean   { color: var(--lean); }
+.tier-none   { color: var(--text-soft); }
+
+/* ---- drill-down panel ---- */
+.game-drawer {
+  padding: 22px 26px; background: var(--bg-panel);
+  border-bottom: 1px solid var(--line-soft);
+}
+.game-drawer .head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 20px; }
+.game-drawer h2 {
+  margin: 0; font-family: 'Barlow Condensed', sans-serif; font-size: 30px;
+  font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+}
+.game-drawer .meta {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  letter-spacing: .06em; color: var(--text-soft); margin-top: 4px;
+}
+.game-drawer .cols { display: grid; grid-template-columns: 1.35fr minmax(0, 1fr); gap: 26px; }
+.game-drawer .prob-legend {
+  display: flex; justify-content: space-between;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  letter-spacing: .08em; color: var(--text-soft); margin-bottom: 8px;
+}
+.stat-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px; background: #1a212c; border: 1px solid #1a212c;
+  border-radius: 8px; overflow: hidden; margin-top: 18px;
+}
+.stat-grid .stat { background: #0b0f15; padding: 13px 14px; }
+.stat-grid .k {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--text-soft);
+}
+.stat-grid .v {
+  font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 600; margin-top: 3px;
+}
+.game-drawer .note {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  color: var(--text-soft); margin-top: 12px; line-height: 1.6;
+}
+.factor { display: grid; grid-template-columns: 128px minmax(0, 1fr) 44px; align-items: center; gap: 10px; }
+.factor .name { font-size: 13px; color: var(--text-dim); }
+.factor .track { display: flex; height: 8px; background: var(--bg-track); border-radius: 4px; overflow: hidden; }
+.factor .track .lhs { width: 50%; display: flex; justify-content: flex-end; }
+.factor .track .rhs { width: 50%; }
+.factor .track i { display: block; height: 8px; }
+.factor .track .lhs i { background: #7d4a52; border-radius: 4px 0 0 4px; }
+.factor .track .rhs i { background: var(--pos); border-radius: 0 4px 4px 0; }
+.factor .val { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-mute); text-align: right; }
+
+/* ---- narrow screens: the slate degrades to two lines per game ---- */
+@media (max-width: 900px) {
+  .slate-head { display: none; }
+  .slate-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 8px; }
+  .slate-row .prob-cell { grid-column: 1 / -1; }
+  .game-drawer .cols { grid-template-columns: minmax(0, 1fr); }
+  .featured-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Narrow screens: the masthead and the week rail are the two rows that
+   don't survive a phone width -- the masthead wraps into a column and the
+   performance button overflows, and the 18 week chips push past the right
+   edge. Let the masthead wrap and scroll the rail sideways instead, which
+   keeps the season's shape readable at any width. */
+@media (max-width: 640px) {
+  .board-masthead {
+    flex-wrap: wrap; gap: 10px 12px; padding: 14px 16px;
+  }
+  .board-masthead h1 { font-size: 22px; }
+  .board-masthead .tag { flex: 1; }
+  .board-spacer { flex: 0; }
+
+  .week-strip {
+    padding: 12px 16px; gap: 8px;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .week-strip::-webkit-scrollbar { display: none; }
+  .week-strip .season,
+  .week-chip { flex: none; }
+  /* The count sits after a flex spacer, which collapses in a scroller --
+     it reads fine at the end of the rail. */
+  .week-strip .count { flex: none; padding-left: 4px; }
+
+  .board-section { padding: 16px 16px 8px; }
+  .board-section:last-child { padding-bottom: 18px; }
+  .game-drawer { padding: 18px 16px; }
+  /* Three stat cells at 375px force the predicted score onto three lines;
+     one column per row keeps each value on a single line. */
+  .game-drawer .stat-grid { grid-template-columns: minmax(0, 1fr); }
+}
