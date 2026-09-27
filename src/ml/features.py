@@ -41,7 +41,7 @@ FEATURE_COLUMNS = [
     "home_qb_epa", "away_qb_epa", "qb_epa_diff",
     "home_qb_success_rate", "away_qb_success_rate",
     "home_qb_starter_change", "away_qb_starter_change",
-    "opening_spread", "current_spread", "spread_movement",
+    "current_spread",
 ]
 
 ID_COLUMNS = ["game_id", "season", "week", "home_team_id", "away_team_id"]
