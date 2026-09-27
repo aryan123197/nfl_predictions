@@ -75,3 +75,50 @@ def test_evaluate_betting_tiers():
     assert "edge_ge_2.0pts" in results
     assert results["all_games"]["bets_placed"] == 5
     assert results["edge_ge_2.0pts"]["bets_placed"] == 3  # only edges >= 2.0
+
+
+def test_margin_std_is_floored_so_cover_probability_stays_sane():
+    """A too-small margin_std manufactures fake betting edges.
+
+    margin_std is the spread of the cover-probability distribution. Trainers
+    estimated it from IN-SAMPLE residuals, which a boosted tree drives far
+    below real forecast error -- champion models stored values as low as
+    2.69 points when the true residual std against completed games is ~12.8.
+
+    The effect is not subtle: at std=2.69 a 6.6-point model edge prices as a
+    99% cover and +89% EV, so every game on the slate reads STRONG_VALUE.
+    """
+    pred_margins = np.array([9.6])
+    market_spreads = np.array([3.0])
+
+    realistic = calculate_empirical_cover_probability(
+        pred_margins, market_spreads, default_std=13.5
+    )[0]
+    overconfident = calculate_empirical_cover_probability(
+        pred_margins, market_spreads, default_std=2.69
+    )[0]
+
+    # A 6.6-point edge is a real lean, but nowhere near a certainty.
+    assert 0.60 < realistic < 0.80
+    # The understated std turns that same edge into a near-lock.
+    assert overconfident > 0.95
+
+
+def test_win_probability_is_not_a_cover_probability():
+    """P(win outright) and P(cover) must not be substituted for one another.
+
+    The betting endpoint used to fall back to home_win_probability when
+    cover_probability was null. They are different quantities -- a heavy
+    favourite usually wins but only covers about half the time -- so the
+    substitution invented spread edges from a number that never described
+    the spread.
+    """
+    # Home favoured by 10; it wins far more often than it covers -10.
+    pred_margins = np.array([10.0])
+    market_spreads = np.array([10.0])
+    cover = calculate_empirical_cover_probability(
+        pred_margins, market_spreads, default_std=13.5
+    )[0]
+    # Predicted margin sits exactly on the line => a coin flip to cover...
+    assert cover == pytest.approx(0.5, abs=0.05)
+    # ...even though such a team wins outright far more often than that.

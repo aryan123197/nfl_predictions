@@ -72,7 +72,11 @@ def _evaluate_model_on_df(model: NFLPredictionModel, holdout_df: pd.DataFrame) -
     has_spread = holdout_df["current_spread"].notna()
     if has_spread.sum() > 0:
         ats_preds = pred_margins[has_spread]
-        ats_lines = -market_spreads[has_spread]
+        # current_spread is stated from the home team's perspective
+        # (positive => home favoured), so the cover threshold is the line
+        # itself. Negating it skews the pick and the outcome identically,
+        # which inflates ATS accuracy towards ~79% regardless of skill.
+        ats_lines = market_spreads[has_spread]
         ats_actuals = y_margin_holdout[has_spread]
         non_push = ats_actuals != ats_lines
         if non_push.sum() > 0:

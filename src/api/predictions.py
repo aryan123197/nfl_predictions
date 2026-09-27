@@ -210,9 +210,16 @@ def compute_model_performance(engine=None) -> dict:
         if r["market_spread"] is not None and r["predicted_margin"] is not None:
             market_spread = float(r["market_spread"])
             pred_margin = float(r["predicted_margin"])
-            # Spread: home is favored by -market_spread (e.g. spread=-3 => home needs to win by >3)
-            # Cover condition: home covers if actual_margin > -market_spread
-            market_threshold = -market_spread
+            # market_spread is stated from the home team's perspective, as
+            # nflverse's spread_line is: positive => home favoured. Verified
+            # against the warehouse's final games -- home wins 68.8% when it
+            # is positive vs 34.3% when negative -- and it is the same
+            # convention format.ts::spread() and betting.py use.
+            #
+            # So the cover threshold IS the spread, not its negation. Negating
+            # it skewed the pick and the outcome the same way, which made them
+            # agree regardless of skill and reported ~79% ATS.
+            market_threshold = market_spread
             pick_home = pred_margin > market_threshold
             home_covered = actual_margin > market_threshold
             if actual_margin != market_threshold:
@@ -305,8 +312,13 @@ def get_betting_recommendations(
         for r in rows:
             spread_line = r["market_spread"] if r["market_spread"] is not None else r["current_spread"]
             cover_prob = r["cover_probability"]
-            if cover_prob is None and r["home_win_probability"] is not None:
-                cover_prob = float(r["home_win_probability"])
+            # No fallback to home_win_probability. P(win outright) and
+            # P(cover the spread) are different quantities -- on the stored
+            # predictions they correlate at only 0.39 and differ by 19 points
+            # on average, because a heavy favourite usually wins but often
+            # fails to cover. Substituting one for the other invented an edge
+            # out of a number that was never about the spread. A game with no
+            # cover probability has no spread recommendation.
 
             rec = evaluate_spread_bet(
                 game_id=r["game_id"],

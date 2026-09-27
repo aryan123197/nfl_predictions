@@ -100,8 +100,18 @@ def train_model(train_df: pd.DataFrame) -> NFLPredictionModel:
         else margin_model.predict(X_train)
     )
     residuals = y_margin_train.values - train_pred_margins
+    # These are IN-SAMPLE residuals: the boosted trees were just fit on this
+    # data, so they sit far below real forecast error. Measured against the
+    # warehouse's finals the true residual std is ~12.8 points, while models
+    # stored values as low as 2.69 -- which is the claim that an NFL margin
+    # can be called to within three points.
+    #
+    # margin_std is the spread of the cover-probability distribution, so
+    # understating it drives P(cover) towards 0/1 and manufactures huge
+    # fake edges downstream in the betting endpoint. Floor it at the
+    # league-typical 13.5 rather than trusting a fit to training data.
     margin_std = float(np.std(residuals)) if len(residuals) > 1 else 13.5
-    if margin_std < 1.0:
+    if margin_std < 10.0:
         margin_std = 13.5
 
     return NFLPredictionModel(

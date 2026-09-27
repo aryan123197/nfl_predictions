@@ -313,3 +313,89 @@ def test_betting_recommendations_endpoint(client):
     assert "recommendations" in slate
 
 
+
+
+def test_ats_grades_against_the_spread_not_its_negation(client):
+    """ATS must treat market_spread as the cover threshold, not -market_spread.
+
+    market_spread is stated from the home team's perspective (positive =>
+    home favoured), the same convention as nflverse's spread_line and
+    src/ml/betting.py. Grading against the negated line silently skews the
+    pick and the outcome the same way, so they agree regardless of skill --
+    which reported ATS accuracy near 79% on real data.
+
+    The game below is chosen so the two conventions disagree: home is a 6.5
+    favourite and wins by 4, so it does NOT cover, while the model predicted
+    a 9-point home margin and so DID pick home to cover. That is a miss.
+    Under the negated threshold (-6.5) both comparisons flip true and it
+    would score as a hit.
+    """
+    import src.db as db
+
+    table = db.qualified_table("ml", "predictions")
+    with db.get_engine().begin() as conn:
+        conn.execute(
+            text(
+                f"CREATE TABLE IF NOT EXISTS {table} ("
+                "prediction_id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT, "
+                "model_version TEXT, prediction_timestamp TEXT, "
+                "home_win_probability REAL, away_win_probability REAL, "
+                "predicted_home_score REAL, predicted_away_score REAL, "
+                "predicted_margin REAL, market_spread REAL)"
+            )
+        )
+        # 2025_01_BUF_KC: home 27, away 23 -- home wins by 4.
+        conn.execute(
+            text(
+                f"INSERT INTO {table} (game_id, model_version, prediction_timestamp, "
+                "home_win_probability, away_win_probability, predicted_home_score, "
+                "predicted_away_score, predicted_margin, market_spread) VALUES "
+                "('2025_01_BUF_KC', 'v0.1', '2025-09-06T12:00:00', 0.68, 0.32, "
+                "30.0, 21.0, 9.0, 6.5)"
+            )
+        )
+
+    perf = client.get("/model/performance").json()
+    # Model picked home -6.5, home only won by 4 => the pick missed.
+    assert perf["ats_accuracy"] == 0.0
+
+
+def test_no_spread_recommendation_without_a_cover_probability(client):
+    """A game with no cover_probability yields no spread bet.
+
+    The endpoint used to substitute home_win_probability when
+    cover_probability was null -- 37.5% of stored predictions. The two
+    correlate at only 0.39 and differ by 19 points on average, so the
+    substitution fabricated spread edges from a number about winning
+    outright, not about covering.
+    """
+    import src.db as db
+
+    table = db.qualified_table("ml", "predictions")
+    with db.get_engine().begin() as conn:
+        conn.execute(
+            text(
+                f"CREATE TABLE IF NOT EXISTS {table} ("
+                "prediction_id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT, "
+                "model_version TEXT, prediction_timestamp TEXT, "
+                "home_win_probability REAL, away_win_probability REAL, "
+                "predicted_home_score REAL, predicted_away_score REAL, "
+                "predicted_margin REAL, market_spread REAL, cover_probability REAL)"
+            )
+        )
+        # A lopsided win probability, but no cover probability at all.
+        conn.execute(
+            text(
+                f"INSERT INTO {table} (game_id, model_version, prediction_timestamp, "
+                "home_win_probability, away_win_probability, predicted_home_score, "
+                "predicted_away_score, predicted_margin, market_spread, "
+                "cover_probability) VALUES "
+                "('2025_01_BUF_KC', 'v0.1', '2025-09-06T12:00:00', 0.93, 0.07, "
+                "30.0, 17.0, 13.0, 3.0, NULL)"
+            )
+        )
+
+    slate = client.get(
+        "/betting/recommendations", params={"season": 2025, "week": 1}
+    ).json()
+    assert all(r["game_id"] != "2025_01_BUF_KC" for r in slate["recommendations"])

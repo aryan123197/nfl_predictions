@@ -205,7 +205,12 @@ def train_ensemble_model(
     total_ridge = Ridge(alpha=1.0, random_state=random_state)
     total_ridge.fit(X_clean, y_total_train)
 
+    # std of the TARGETS, not of residuals -- unlike train.py/backtest.py.
+    # It lands near the league-typical 13.5 by coincidence rather than by
+    # construction, so floor it the same way the other trainers do.
     margin_std = float(np.std(y_margin_train)) if len(y_margin_train) > 1 else 13.5
+    if margin_std < 10.0:
+        margin_std = 13.5
 
     return EnsembleNFLModel(
         win_xgb=win_xgb,
