@@ -1,9 +1,17 @@
 # Automated Data & Prediction Pipeline (Phase 6 / Design Doc Section 29-30)
 #
-# Runs on schedule during the NFL season before game days:
+# Runs on schedule during the NFL season:
 # - Wednesdays 14:00 UTC (10:00 AM ET): Midweek injury & odds updates
 # - Fridays 14:00 UTC (10:00 AM ET): Late-week practice report updates & weekend lines
 # - Sundays 14:00 UTC (10:00 AM ET): Final pre-kickoff predictions & status sync
+# - Tuesdays 05:00 UTC (1:00 AM ET): Pulls final scores for the ENTIRE
+#   Sunday/Monday slate, including Monday Night Football (kicks off 8:15pm
+#   ET Monday, often runs past midnight) -- the Sunday 10am ET run above
+#   fires before any Sunday game has even kicked off, so it can never see
+#   that day's own results. This run is what actually closes the loop on a
+#   week's worth of finals so predictions/health reflect real outcomes; it
+#   also runs an hour before retrain.yml's Tuesday 06:00 UTC run, so the
+#   retraining cadence always sees that week's finals already ingested.
 #
 # Can also be triggered manually on-demand via workflow_dispatch.
 name: pipeline
@@ -11,6 +19,7 @@ name: pipeline
 on:
   schedule:
     - cron: "0 14 * * 3,5,0"
+    - cron: "0 5 * * 2"
   workflow_dispatch:
     inputs:
       season:
